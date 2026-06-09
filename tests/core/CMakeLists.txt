@@ -18,6 +18,7 @@ target_include_directories(doctest_header INTERFACE ${doctest_SOURCE_DIR})
 add_executable(yoshinani.core.tests
   test_main.cpp
   test_trigger_policy.cpp
+  test_input_session.cpp
 )
 target_link_libraries(yoshinani.core.tests PRIVATE yoshinani.core doctest_header)
 

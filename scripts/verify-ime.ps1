@@ -86,8 +86,8 @@ switch ($Action) {
             Warn "DLL 未ビルド → 先に -Action Build を実行してください: $dllPath"; $ready = $false
         }
 
-        # 4) 管理者権限（登録に必要）
-        if (Test-Admin) { Ok "管理者権限あり（regsvr32 登録可）" } else { Warn "非管理者 → regsvr32 登録は失敗します。管理者シェルで実行してください。"; $ready = $false }
+        # 4) 管理者権限（Register は UAC で自動昇格するため、ここは情報表示のみ）
+        if (Test-Admin) { Ok "管理者権限あり" } else { Info "非管理者（Register 実行時に UAC で自動昇格します）" }
 
         Write-Host ""
         if ($ready) { Ok "動作確認の前提は整っています。スキル verify-ime で GUI 確認へ進めます。"; exit 0 }
@@ -96,7 +96,7 @@ switch ($Action) {
 
     'Register' {
         if (-not (Test-Path $dllPath)) { Notify-Error "DLL 未ビルド: $dllPath（-Action Build を先に）" }
-        if (-not (Test-Admin))         { Notify-Error "管理者権限が必要です。管理者 PowerShell で再実行してください。" }
+        # 管理者権限は要求しない: 下の Start-Process -Verb RunAs が UAC で自動昇格する。
         $reg = Test-DllRegisterable $dllPath
         if ($reg -eq $false)           { Notify-Error "この DLL は DllRegisterServer を持ちません（1-A 未実装）。登録は 1-A 完了後に可能になります。" }
         Info "regsvr32 /s $dllPath"
