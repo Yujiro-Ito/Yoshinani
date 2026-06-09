@@ -2,12 +2,15 @@
 #include "TextService.h"
 #include "EditSession.h"
 #include "KeyMap.h"
+#include "OllamaKanaKanjiConverter.h"
 #include "domain/TriggerPolicy.h"
 #include "application/Settings.h"
 #include <fstream>
+#include <memory>
 #include <new>
 #include <sstream>
 #include <string>
+#include <utility>
 
 using yoshinani::core::domain::KeyKind;
 using yoshinani::core::domain::InputAction;
@@ -126,6 +129,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (m_pThreadMgr) m_pThreadMgr->AddRef();
     m_tfClientId = tid;
     m_triggerVKs = LoadTriggerVKs();
+    // v1 のショートカット: TIP が具体実装(Ollama)を直接 new している（ポート経由の DI ではない）。
+    // バックエンド選択（Ollama / クラウド GPT / 自作デーモン）は将来 Factory/設定で差し替える残債。
+    m_converter = std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>();
 
     if (!InitKeyEventSink()) {
         Deactivate();
@@ -145,6 +151,7 @@ STDMETHODIMP CTextService::Deactivate() {
         m_pComposition = nullptr;
     }
     m_session.Clear();
+    m_converter.reset();
     if (m_pThreadMgr) {
         m_pThreadMgr->Release();
         m_pThreadMgr = nullptr;
@@ -245,6 +252,34 @@ HRESULT CTextService::ClearText(TfEditCookie ec) {
     return S_OK;
 }
 
+// 変換結果（任意文字列）で composition を置換して確定する（Commit 用）。
+HRESULT CTextService::CommitText(TfEditCookie ec, ITfContext* pic, const std::u16string& text) {
+    if (!m_pComposition) {
+        if (FAILED(StartComposition(ec, pic)) || !m_pComposition) return E_FAIL;
+    }
+    HRESULT hr = E_FAIL;
+    ITfRange* pRange = nullptr;
+    if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
+        hr = pRange->SetText(ec, 0, reinterpret_cast<const WCHAR*>(text.c_str()),
+                             static_cast<LONG>(text.size()));
+        // キャレットを確定文字列の末尾へ
+        ITfRange* pSel = nullptr;
+        if (SUCCEEDED(pRange->Clone(&pSel))) {
+            pSel->Collapse(ec, TF_ANCHOR_END);
+            TF_SELECTION ts;
+            ts.range = pSel;
+            ts.style.ase = TF_AE_NONE;
+            ts.style.fInterimChar = FALSE;
+            pic->SetSelection(ec, 1, &ts);
+            pSel->Release();
+        }
+        pRange->Release();
+    }
+    // SetText の成否に関わらず composition は必ず終了させる（宙吊り防止）。失敗は hr で返す。
+    EndComposition(ec);
+    return hr;
+}
+
 void CTextService::EndComposition(TfEditCookie ec) {
     if (m_pComposition) {
         m_pComposition->EndComposition(ec);
@@ -295,13 +330,25 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
             });
             break;
 
-        case InputAction::Commit:
-            RequestEditSession(pic, [this](TfEditCookie ec) -> HRESULT {
-                EndComposition(ec);
+        case InputAction::Commit: {
+            // 変換は edit session の外で同期実行（ドキュメントロックを長時間握らないため）。
+            // 失敗・デーモン不在時は生のローマ字 preedit をそのまま確定（フォールバック・3-E）。
+            std::u16string toCommit = m_session.Preedit();
+            if (m_converter && !m_session.Empty()) {
+                m_converter->Convert(
+                    m_nextRequestId++, m_session.Preedit(),
+                    [&toCommit](yoshinani::core::domain::RequestId,
+                                yoshinani::core::domain::ConversionResult r) {
+                        if (r.ok && !r.text.empty()) toCommit = r.text;
+                    });
+            }
+            RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
+                CommitText(ec, pic, toCommit);
                 return S_OK;
             });
             m_session.Clear();
             break;
+        }
 
         case InputAction::Cancel:
             RequestEditSession(pic, [this](TfEditCookie ec) -> HRESULT {
