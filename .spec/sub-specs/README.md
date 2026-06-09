@@ -29,8 +29,8 @@ pwsh -File scripts/verify-ime.ps1 -Action Check   # TSF ランタイム確認の
   （Windows-MCP / computer-use。未整備なら実行エラーで通知）。
 - 詳細・実測ツールチェーン・踏んだ落とし穴は [0-B](phase0-build-system.md) を参照。
 
-> Phase 0 足場は構築済み・**ループ緑を実証済み**（core/ipc/tsf/tests がビルド、ctest 1/1 passed）。
-> TSF DLL は現状スタブ（`DllRegisterServer` は 1-A で実装）。
+> 進捗: **Phase 0・Phase 1 実装済み**（最小 TIP が登録され、メモ帳で preedit→Space 確定を実機確認）。
+> トリガーは `Space`（設定 JSON で変更可）。Phase 2 以降は spec 作成済・実装はこれから。
 
 ---
 
@@ -44,18 +44,18 @@ pwsh -File scripts/verify-ime.ps1 -Action Check   # TSF ランタイム確認の
 | **1-A** | [TSF スケルトン & COM 登録](phase1-tsf-skeleton.md) | Step1 §7 | ✅ 作成済 |
 | **1-B** | [preedit ライフサイクル](phase1-preedit-lifecycle.md) | Step1 §7 | ✅ 作成済 |
 | **1-C** | [トリガー確定](phase1-trigger-commit.md) | Step1 §5,§7 | ✅ 作成済 |
-| 2-A | romaji→kana 決定的変換 | Step2 | ⬜ 未作成 |
-| 2-B | preedit への結線 | Step2 | ⬜ 未作成 |
-| 3-A | 変換ポート抽象（request_id 付き非同期IF / §6.5①） | Step3 | ⬜ 未作成 |
-| 3-B | zenz デーモン（llama.cpp + GGUF） | Step3 | ⬜ 未作成 |
-| 3-C | 名前付きパイプ IPC | Step3 | ⬜ 未作成 |
-| 3-D | 変換キュー & 投入順確定（§6.5②③） | Step3 | ⬜ 未作成 |
-| 3-E | A 自動確定の結線 | Step3 | ⬜ 未作成 |
-| 4-A | async 化（B方式） | Step4 | ⬜ 未作成 |
-| 4-B | 変換中セグメント色分け | Step4 | ⬜ 未作成 |
-| 4-C | 固有名詞辞書 / 文体プロンプト | Step4 | ⬜ 未作成 |
-| 4-D | 速度最適化 | Step4 | ⬜ 未作成 |
-| 4-E | Android アダプタ | Step4,§8 | ⬜ 未作成 |
+| 2-A | [romaji→kana 決定的変換](phase2-romaji-kana.md) | Step2 | ✅ 作成済 |
+| 2-B | [preedit への結線](phase2-preedit-integration.md) | Step2 | ✅ 作成済 |
+| 3-A | [変換ポート抽象（request_id 付き非同期IF / §6.5①）](phase3-converter-port.md) | Step3 | ✅ 作成済 |
+| 3-B | [zenz デーモン（llama.cpp + GGUF）](phase3-zenz-daemon.md) | Step3 | ✅ 作成済 |
+| 3-C | [名前付きパイプ IPC](phase3-ipc-pipe.md) | Step3 | ✅ 作成済 |
+| 3-D | [変換キュー & 投入順確定（§6.5②③）](phase3-conversion-queue.md) | Step3 | ✅ 作成済 |
+| 3-E | [A 自動確定の結線](phase3-auto-commit.md) | Step3 | ✅ 作成済 |
+| 4-A | [async 化（B方式）](phase4-async.md) | Step4 | ✅ 作成済 |
+| 4-B | [変換中セグメント色分け](phase4-segment-color.md) | Step4 | ✅ 作成済 |
+| 4-C | [固有名詞辞書 / 文体プロンプト](phase4-dictionary-style.md) | Step4 | ✅ 作成済 |
+| 4-D | [速度最適化](phase4-speed-opt.md) | Step4 | ✅ 作成済 |
+| 4-E | [Android アダプタ](phase4-android-adapter.md) | Step4,§8 | ✅ 作成済 |
 
 ★ **Phase 1〜3 でプロダクト完結**。Phase 4 は全て「あったら嬉しい」枠。
 
