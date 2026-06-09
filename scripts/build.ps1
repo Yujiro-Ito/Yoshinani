@@ -17,13 +17,26 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$BuildType = 'Debug',
+    # 出力先ビルドディレクトリ。省略時は build/ninja-<type>。
+    # 既存 yoshinani.dll が他プロセス(explorer/Claude 等)にロードされてロックされ
+    # 再リンクできない時、別ディレクトリへ逃がして検証するために使う。
+    [string]$BuildDir,
+    # 特定ターゲットのみビルド（例: yoshinani.core.tests）。
+    # TSF DLL がロックされている時、core/テストだけを DLL に触れず再ビルドするのに使う。
+    # 注: -NoTest を付けなければ ctest はこの構成の全登録テストを実行する
+    #     （指定ターゲットがそのテスト exe を含む前提。非テストターゲット指定時は -NoTest 推奨）。
+    [string]$Target,
     [switch]$Clean,
     [switch]$NoTest
 )
 
 $ErrorActionPreference = 'Stop'
 $root  = Split-Path -Parent $PSScriptRoot
-$build = Join-Path $root "build/ninja-$($BuildType.ToLower())"
+if ($BuildDir) {
+    $build = if ([System.IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $root $BuildDir }
+} else {
+    $build = Join-Path $root "build/ninja-$($BuildType.ToLower())"
+}
 
 function Fail($msg) {
     Write-Host "‼ 動作環境エラー: $msg" -ForegroundColor Red
@@ -99,8 +112,13 @@ Write-Host "→ configure ($BuildType)" -ForegroundColor Cyan
 cmake -S $root -B $build -G Ninja "-DCMAKE_BUILD_TYPE=$BuildType"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "→ build" -ForegroundColor Cyan
-cmake --build $build
+if ($Target) {
+    Write-Host "→ build (target: $Target)" -ForegroundColor Cyan
+    cmake --build $build --target $Target
+} else {
+    Write-Host "→ build" -ForegroundColor Cyan
+    cmake --build $build
+}
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not $NoTest) {
