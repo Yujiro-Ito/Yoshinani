@@ -1,0 +1,96 @@
+# ============================================================
+#  よしなに (Yoshinani) .gitignore
+#  C++ / TSF Text Input Processor (Windows DLL)
+#  + llama.cpp + zenz (GGUF)
+# ============================================================
+
+# ---- Visual Studio / MSBuild 出力 ----
+[Dd]ebug/
+[Rr]elease/
+[Dd]ebugPublic/
+[Rr]eleases/
+[Xx]64/
+[Xx]86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Ll]og/
+[Ll]ogs/
+bld/
+
+# Visual Studio キャッシュ / ユーザー設定
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.VC.db
+*.VC.VC.opendb
+*.opensdf
+*.sdf
+*.cachefile
+
+# ---- C / C++ ビルド成果物 ----
+*.obj
+*.o
+*.lib
+*.a
+*.dll
+*.exp
+*.ilk
+*.pdb
+*.pch
+*.ipch
+*.idb
+*.res
+*.tlog
+*.exe
+*.so
+*.dylib
+
+# ---- CMake ----
+build/
+build*/
+out/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CMakeUserPresets.json
+CTestTestfile.cmake
+compile_commands.json
+_deps/
+
+# ---- パッケージマネージャ (vcpkg 等) ----
+vcpkg_installed/
+
+# ============================================================
+#  LLM モデル / 重み（大容量バイナリ。Git に載せない）
+#  zenz (GGUF) / llama.cpp の weights は各自ダウンロードする
+# ============================================================
+*.gguf
+*.ggml
+*.bin
+*.safetensors
+*.pt
+*.pth
+models/
+weights/
+
+# ---- vendor した llama.cpp のビルド産物のみ無視 ----
+**/llama.cpp/build/
+
+# ---- IDE / エディタ ----
+.idea/
+*.swp
+*~
+
+# ---- OS 生成ファイル ----
+Thumbs.db
+ehthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.DS_Store
