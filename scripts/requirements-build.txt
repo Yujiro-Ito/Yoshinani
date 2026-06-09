@@ -1,0 +1,13 @@
+# よしなに(Yoshinani) — ビルドツール（pip 経由で入れる CLI）
+# 用途: C++ ビルドの駆動。CMake が構成を生成し Ninja がコンパイルを実行する。
+#   ※ プロジェクト本体は C++。これは「Python アプリの依存」ではなく「ビルド道具」。
+#   ※ MSVC コンパイラ / Windows SDK は pip では入らない（VS Build Tools を別途導入）。
+#
+# 導入: pip install --user -r scripts/requirements-build.txt
+#   （scripts/build.ps1 が cmake/ninja 不在時にこれを自動実行する）
+#
+# バージョン方針: VS 同梱の壊れた CMake 3.20 を避けるため下限を切る。
+#   固定したい場合は `cmake==4.3.2` のように書き換える。
+
+cmake>=3.28
+ninja>=1.11

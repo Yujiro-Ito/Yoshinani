@@ -1,0 +1,69 @@
+# よしなに (Yoshinani) — サブスペック索引
+
+`MAIN_SPEC.md`（`.spec/MAIN_SPEC.md`）のロードマップを SDD（仕様駆動開発）で実装するための
+サブスペック群。各フェーズは「最小の縦スライス」で完結させ、Phase 1〜3 でプロダクトが成立する。
+
+- 元仕様: [MAIN_SPEC.md](../MAIN_SPEC.md)
+- 開発手法: SDD + ライト DDD（domain / application / infrastructure 分離）
+- テスト方針: 厳密な TDD ではなく「**最後にテストが揃っていればよい**」。
+  そのため**テストしたい純粋ロジックを `yoshinani.core` に隔離**しておく（→ [0-A](phase0-architecture.md)）。
+
+---
+
+## ビルド & 検証（自己完結ループ・CLI 完結）
+
+VS IDE 不要。**現行版 CMake + Ninja** を使う（`build.ps1` が不在時に
+[`scripts/requirements-build.txt`](../../scripts/requirements-build.txt) から pip で自動導入）。
+
+```powershell
+pwsh -File scripts/build.ps1            # vcvars 読込 → (必要なら cmake/ninja 自動導入) → configure → build → ctest
+pwsh -File scripts/build.ps1 -Clean     # クリーン再構成
+pwsh -File scripts/verify-ime.ps1 -Action Check   # TSF ランタイム確認の前提点検
+```
+
+> 前提（別PCの初回のみ）: **VS Build Tools +「C++によるデスクトップ開発」**（`cl.exe`/Windows SDK）。
+> これだけは pip では入らないので手動導入が必要。cmake/ninja は `build.ps1` が自動で入れる。
+
+- 自動: `yoshinani.core` のユニットテスト（`ctest`）。これは私（エージェント）が人手なしで回せる。
+- 手動/MCP: 実アプリでの preedit 目視は [verify-ime スキル](../../.claude/skills/verify-ime/SKILL.md)
+  （Windows-MCP / computer-use。未整備なら実行エラーで通知）。
+- 詳細・実測ツールチェーン・踏んだ落とし穴は [0-B](phase0-build-system.md) を参照。
+
+> Phase 0 足場は構築済み・**ループ緑を実証済み**（core/ipc/tsf/tests がビルド、ctest 1/1 passed）。
+> TSF DLL は現状スタブ（`DllRegisterServer` は 1-A で実装）。
+
+---
+
+## フェーズ一覧
+
+| ID | サブスペック | SPEC対応 | 状態 |
+|--|--|--|--|
+| **0-A** | [アーキテクチャ方針](phase0-architecture.md) | §3,§8 | ✅ 作成済 |
+| **0-B** | [ビルド/プロジェクト構成](phase0-build-system.md) | §4 | ✅ 作成済 |
+| **0-C** | [テスト土台](phase0-test-harness.md) | — | ✅ 作成済 |
+| **1-A** | [TSF スケルトン & COM 登録](phase1-tsf-skeleton.md) | Step1 §7 | ✅ 作成済 |
+| **1-B** | [preedit ライフサイクル](phase1-preedit-lifecycle.md) | Step1 §7 | ✅ 作成済 |
+| **1-C** | [トリガー確定](phase1-trigger-commit.md) | Step1 §5,§7 | ✅ 作成済 |
+| 2-A | romaji→kana 決定的変換 | Step2 | ⬜ 未作成 |
+| 2-B | preedit への結線 | Step2 | ⬜ 未作成 |
+| 3-A | 変換ポート抽象（request_id 付き非同期IF / §6.5①） | Step3 | ⬜ 未作成 |
+| 3-B | zenz デーモン（llama.cpp + GGUF） | Step3 | ⬜ 未作成 |
+| 3-C | 名前付きパイプ IPC | Step3 | ⬜ 未作成 |
+| 3-D | 変換キュー & 投入順確定（§6.5②③） | Step3 | ⬜ 未作成 |
+| 3-E | A 自動確定の結線 | Step3 | ⬜ 未作成 |
+| 4-A | async 化（B方式） | Step4 | ⬜ 未作成 |
+| 4-B | 変換中セグメント色分け | Step4 | ⬜ 未作成 |
+| 4-C | 固有名詞辞書 / 文体プロンプト | Step4 | ⬜ 未作成 |
+| 4-D | 速度最適化 | Step4 | ⬜ 未作成 |
+| 4-E | Android アダプタ | Step4,§8 | ⬜ 未作成 |
+
+★ **Phase 1〜3 でプロダクト完結**。Phase 4 は全て「あったら嬉しい」枠。
+
+## 実装順序（推奨）
+
+```
+0-A 憲法 → 0-B ビルド → 0-C テスト枠
+   → 1-A TSF登録 → 1-B preedit → 1-C トリガー確定   ← Step1: 最大の壁を突破
+   → 2-A romaji→kana → 2-B 結線                      ← Step2: ローマ字かな入力成立
+   → 3-A ポート → 3-B デーモン → 3-C IPC → 3-D キュー → 3-E 確定  ← Step3: プロダクト完成
+```

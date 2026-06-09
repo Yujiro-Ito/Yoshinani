@@ -1,0 +1,9 @@
+# yoshinani.core — domain + application（0-A）
+# 重要: OS 非依存を保つ。Windows ライブラリをリンクしない / TSF ヘッダを通さない。
+add_library(yoshinani.core STATIC
+  domain/TriggerPolicy.cpp
+)
+
+# 公開 include ルートを src/core にする → #include "domain/TriggerPolicy.h"
+target_include_directories(yoshinani.core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(yoshinani.core PUBLIC cxx_std_20)
