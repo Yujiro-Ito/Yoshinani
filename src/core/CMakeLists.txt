@@ -3,6 +3,7 @@
 add_library(yoshinani.core STATIC
   domain/TriggerPolicy.cpp
   application/Settings.cpp
+  application/ConversionQueue.cpp
 )
 
 # 公開 include ルートを src/core にする → #include "domain/TriggerPolicy.h"

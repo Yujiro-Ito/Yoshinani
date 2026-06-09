@@ -20,6 +20,7 @@ add_executable(yoshinani.core.tests
   test_trigger_policy.cpp
   test_input_session.cpp
   test_settings.cpp
+  test_conversion_queue.cpp
 )
 target_link_libraries(yoshinani.core.tests PRIVATE yoshinani.core doctest_header)
 
