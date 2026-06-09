@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "application/InputSession.h"
 #include <functional>
+#include <set>
 
 class CTextService final : public ITfTextInputProcessorEx,
                            public ITfKeyEventSink,
@@ -50,10 +51,14 @@ private:
     HRESULT ClearText(TfEditCookie ec);                     // composition の中身を空に（取消用）
     void    EndComposition(TfEditCookie ec);
 
+    // 設定（settings.json）から確定トリガーの VK 集合を構築する。
+    std::set<WPARAM> LoadTriggerVKs() const;
+
     LONG          m_cRef;
     ITfThreadMgr* m_pThreadMgr;
     TfClientId    m_tfClientId;
     ITfComposition* m_pComposition;
 
     yoshinani::core::application::InputSession m_session;
+    std::set<WPARAM> m_triggerVKs;   // 確定トリガー（設定由来。既定 = Space）
 };

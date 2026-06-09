@@ -5,6 +5,30 @@
 `。` `、` / `Shift+Tab` で preedit を**そのまま確定**（変換なし）し、`Esc` で取り消す。
 「トリガー＝変換していい＝そのまま確定の合図」という MAIN_SPEC の設計核を、**判定ロジックを domain に純粋実装**して TSF アダプタから呼ぶ形で実現する。これで Step1 が完結する。
 
+## 実装メモ（現状・2026-06-09 更新）
+
+> 当初は `。`/`、`/`Shift+Tab` をトリガーにしたが、**トリガーは Space のみ**に変更。
+> 加えて、将来 Google日本語入力のように**設定画面からキーマップを変更**できるよう、
+> トリガーキーを**設定として分離**した。`。`/`、` 等は設定で後から追加できる。
+
+| 項目 | 現状 |
+|--|--|
+| 確定トリガー | **Space のみ**（`aiueo`+Space → `aiueo` 確定、Space は消費）。preedit 空の Space は素通し |
+| 撤去 | `。`/`、`/`Shift+Tab` のトリガー扱い（設定で再追加可能） |
+| KeyKind | `Character` / **`Trigger`** / `Backspace` / `Escape` / `Other`（Kuten/Touten/ShiftTab を `Trigger` に統合） |
+| 設定の分離 | `core/application/Settings`（OS非依存・`triggerKeys` をキー名で保持・既定 `["Space"]`）。JSON パースも core（テスト可能） |
+| 保存形式 | **JSON**（`nlohmann/json` 単一ヘッダ）。`settings.json` を DLL と同じ場所に置く（無ければ既定） |
+| OS依存の橋渡し | infra `src/tsf/KeyMap.cpp`：キー名 → VK 対応（`"Space"→VK_SPACE`, `"Period"→VK_OEM_PERIOD` …） |
+| 拡張のしかた | settings.json の `triggerKeys` に名前を足す → 反映。新しいキー名は KeyMap に1行足す |
+
+`settings.json` 例:
+```json
+{ "triggerKeys": ["Space", "Period"] }
+```
+
+将来（Step4 付近）: 設定UIでこの JSON を編集 → キーマップ変更。句読点を「出力に含めて確定」したい
+場合は `CommitWithPunct` 系のアクションを再導入し、Trigger の種類で分岐する。
+
 ## 背景・目的
 
 - MAIN_SPEC §5: トリガー＝確定。Enter は使わない（A 自動確定では二度押し不要）。

@@ -7,10 +7,7 @@ InputAction Decide(KeyKind kind, bool preeditEmpty) noexcept {
     switch (kind) {
         case KeyKind::Character:
             return InputAction::Append;
-        case KeyKind::Kuten:
-        case KeyKind::Touten:
-            return preeditEmpty ? InputAction::PassThrough : InputAction::CommitWithPunct;
-        case KeyKind::ShiftTab:
+        case KeyKind::Trigger:
             return preeditEmpty ? InputAction::PassThrough : InputAction::Commit;
         case KeyKind::Backspace:
             return preeditEmpty ? InputAction::PassThrough : InputAction::DeleteLast;

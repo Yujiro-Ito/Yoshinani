@@ -1,8 +1,13 @@
 // 1-A/1-B/1-C — TIP 本体実装。
 #include "TextService.h"
 #include "EditSession.h"
+#include "KeyMap.h"
 #include "domain/TriggerPolicy.h"
+#include "application/Settings.h"
+#include <fstream>
 #include <new>
+#include <sstream>
+#include <string>
 
 using yoshinani::core::domain::KeyKind;
 using yoshinani::core::domain::InputAction;
@@ -14,21 +19,21 @@ namespace {
 bool IsDown(int vk) { return (GetKeyState(vk) & 0x8000) != 0; }
 
 // VK を core の KeyKind に正規化し、文字を伴う場合は out_ch に返す（infra の責務）。
-KeyKind Classify(WPARAM vk, wchar_t& out_ch) {
+//   どの VK が確定トリガーかは triggers（設定由来）で決まる。
+KeyKind Classify(WPARAM vk, const std::set<WPARAM>& triggers, wchar_t& out_ch) {
     out_ch = 0;
     if (IsDown(VK_CONTROL) || IsDown(VK_MENU)) return KeyKind::Other;  // Ctrl/Alt は触らない
+
+    if (triggers.count(vk) != 0) return KeyKind::Trigger;              // 確定トリガー（設定）
 
     if (vk >= 'A' && vk <= 'Z') {                  // 英字 → 小文字ローマ字
         out_ch = static_cast<wchar_t>(L'a' + (vk - 'A'));
         return KeyKind::Character;
     }
     switch (vk) {
-        case VK_OEM_PERIOD: out_ch = L'.'; return KeyKind::Kuten;
-        case VK_OEM_COMMA:  out_ch = L','; return KeyKind::Touten;
-        case VK_TAB:        return IsDown(VK_SHIFT) ? KeyKind::ShiftTab : KeyKind::Other;
-        case VK_BACK:       return KeyKind::Backspace;
-        case VK_ESCAPE:     return KeyKind::Escape;
-        default:            return KeyKind::Other;
+        case VK_BACK:   return KeyKind::Backspace;
+        case VK_ESCAPE: return KeyKind::Escape;
+        default:        return KeyKind::Other;
     }
 }
 
@@ -75,12 +80,46 @@ STDMETHODIMP_(ULONG) CTextService::Release() {
     return cr;
 }
 
+// ---- 設定読込 ----------------------------------------------------------------
+
+// settings.json（DLL と同じディレクトリ）→ core パーサ → キー名を VK へ写像。
+// ファイルが無い/不正でも既定（Space）になる。これがトリガー設定の分離点。
+std::set<WPARAM> CTextService::LoadTriggerVKs() const {
+    using yoshinani::core::application::ParseSettings;
+    using yoshinani::core::application::Settings;
+
+    Settings settings;  // 既定 = {"Space"}
+    WCHAR dllPath[MAX_PATH];
+    DWORD n = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
+    if (n > 0 && n < ARRAYSIZE(dllPath)) {
+        std::wstring path(dllPath);
+        const size_t slash = path.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) {
+            path = path.substr(0, slash + 1) + L"settings.json";
+            std::ifstream f(path.c_str());  // MSVC: wchar_t* パス可
+            if (f) {
+                std::ostringstream ss;
+                ss << f.rdbuf();
+                settings = ParseSettings(ss.str());
+            }
+        }
+    }
+
+    std::set<WPARAM> vks;
+    for (const std::string& name : settings.triggerKeys) {
+        if (auto vk = KeyNameToVk(name)) vks.insert(*vk);
+    }
+    if (vks.empty()) vks.insert(static_cast<WPARAM>(VK_SPACE));  // 安全側
+    return vks;
+}
+
 // ---- 活性化 ------------------------------------------------------------------
 
 STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD /*dwFlags*/) {
     m_pThreadMgr = ptim;
     if (m_pThreadMgr) m_pThreadMgr->AddRef();
     m_tfClientId = tid;
+    m_triggerVKs = LoadTriggerVKs();
 
     if (!InitKeyEventSink()) {
         Deactivate();
@@ -218,7 +257,7 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
                                          BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
-    KeyKind kind = Classify(wParam, ch);
+    KeyKind kind = Classify(wParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, m_session.Empty());
     *pfEaten = (act != InputAction::PassThrough);
     return S_OK;
@@ -228,7 +267,7 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
                                      BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
-    KeyKind kind = Classify(wParam, ch);
+    KeyKind kind = Classify(wParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, m_session.Empty());
     *pfEaten = (act != InputAction::PassThrough);
 
@@ -248,17 +287,6 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
                 if (m_session.Empty()) EndComposition(ec);
                 return hr;
             });
-            break;
-
-        case InputAction::CommitWithPunct:
-            m_session.AppendChar(static_cast<char16_t>(ch));
-            RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
-                if (!m_pComposition) StartComposition(ec, pic);
-                UpdateText(ec, pic);
-                EndComposition(ec);
-                return S_OK;
-            });
-            m_session.Clear();
             break;
 
         case InputAction::Commit:
