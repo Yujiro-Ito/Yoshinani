@@ -7,23 +7,25 @@
 
 ## 実装メモ（現状・2026-06-09 更新）
 
-> 当初は `。`/`、`/`Shift+Tab` をトリガーにしたが、**トリガーは Space のみ**に変更。
-> 加えて、将来 Google日本語入力のように**設定画面からキーマップを変更**できるよう、
-> トリガーキーを**設定として分離**した。`。`/`、` 等は設定で後から追加できる。
+> 経緯: `。`/`、`/`Shift+Tab` → 一旦 `Space` のみ → **最終的に `Tab`**。
+> 理由: B方式の汎用LLM変換は**空白区切りのローマ字だと精度が大幅向上**（[3-B](phase3-zenz-daemon.md) 実測）。
+> Space をトリガーにすると分かち書きできないため、**トリガーを Tab に逃がし、Space を区切り文字**にした。
+> トリガーキーは将来の設定UIに向け**設定として分離**済み。
 
 | 項目 | 現状 |
 |--|--|
-| 確定トリガー | **Space のみ**（`aiueo`+Space → `aiueo` 確定、Space は消費）。preedit 空の Space は素通し |
+| 確定トリガー | **Tab**（preedit 非空で確定・Tab は消費。空 Tab は通常の Tab として素通し） |
+| Space | **分かち書きの区切り**（preedit に空白を足す。空 Space は素通し）。トリガーには使わせない（`LoadTriggerVKs` で VK_SPACE 除外） |
 | 撤去 | `。`/`、`/`Shift+Tab` のトリガー扱い（設定で再追加可能） |
-| KeyKind | `Character` / **`Trigger`** / `Backspace` / `Escape` / `Other`（Kuten/Touten/ShiftTab を `Trigger` に統合） |
-| 設定の分離 | `core/application/Settings`（OS非依存・`triggerKeys` をキー名で保持・既定 `["Space"]`）。JSON パースも core（テスト可能） |
+| KeyKind | `Character` / **`Trigger`** / **`Space`(区切り)** / `Backspace` / `Escape` / `Other` |
+| 設定の分離 | `core/application/Settings`（OS非依存・`triggerKeys` をキー名で保持・既定 `["Tab"]`）。JSON パースも core（テスト可能） |
 | 保存形式 | **JSON**（`nlohmann/json` 単一ヘッダ）。`settings.json` を DLL と同じ場所に置く（無ければ既定） |
-| OS依存の橋渡し | infra `src/tsf/KeyMap.cpp`：キー名 → VK 対応（`"Space"→VK_SPACE`, `"Period"→VK_OEM_PERIOD` …） |
+| OS依存の橋渡し | infra `src/tsf/KeyMap.cpp`：キー名 → VK 対応（`"Tab"→VK_TAB`, `"Period"→VK_OEM_PERIOD` …） |
 | 拡張のしかた | settings.json の `triggerKeys` に名前を足す → 反映。新しいキー名は KeyMap に1行足す |
 
 `settings.json` 例:
 ```json
-{ "triggerKeys": ["Space", "Period"] }
+{ "triggerKeys": ["Tab", "Period"] }
 ```
 
 将来（Step4 付近）: 設定UIでこの JSON を編集 → キーマップ変更。句読点を「出力に含めて確定」したい

@@ -24,13 +24,14 @@ KeyKind Classify(WPARAM vk, const std::set<WPARAM>& triggers, wchar_t& out_ch) {
     out_ch = 0;
     if (IsDown(VK_CONTROL) || IsDown(VK_MENU)) return KeyKind::Other;  // Ctrl/Alt は触らない
 
-    if (triggers.count(vk) != 0) return KeyKind::Trigger;              // 確定トリガー（設定）
+    if (triggers.count(vk) != 0) return KeyKind::Trigger;              // 確定トリガー（設定・既定 Tab）
 
     if (vk >= 'A' && vk <= 'Z') {                  // 英字 → 小文字ローマ字
         out_ch = static_cast<wchar_t>(L'a' + (vk - 'A'));
         return KeyKind::Character;
     }
     switch (vk) {
+        case VK_SPACE:  out_ch = L' '; return KeyKind::Space;  // 区切り空白（分かち書き用）
         case VK_BACK:   return KeyKind::Backspace;
         case VK_ESCAPE: return KeyKind::Escape;
         default:        return KeyKind::Other;
@@ -83,12 +84,12 @@ STDMETHODIMP_(ULONG) CTextService::Release() {
 // ---- 設定読込 ----------------------------------------------------------------
 
 // settings.json（DLL と同じディレクトリ）→ core パーサ → キー名を VK へ写像。
-// ファイルが無い/不正でも既定（Space）になる。これがトリガー設定の分離点。
+// ファイルが無い/不正でも既定（Tab）になる。これがトリガー設定の分離点。
 std::set<WPARAM> CTextService::LoadTriggerVKs() const {
     using yoshinani::core::application::ParseSettings;
     using yoshinani::core::application::Settings;
 
-    Settings settings;  // 既定 = {"Space"}
+    Settings settings;  // 既定 = {"Tab"}
     WCHAR dllPath[MAX_PATH];
     DWORD n = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
     if (n > 0 && n < ARRAYSIZE(dllPath)) {
@@ -107,9 +108,14 @@ std::set<WPARAM> CTextService::LoadTriggerVKs() const {
 
     std::set<WPARAM> vks;
     for (const std::string& name : settings.triggerKeys) {
-        if (auto vk = KeyNameToVk(name)) vks.insert(*vk);
+        if (auto vk = KeyNameToVk(name)) {
+            // Space は分かち書きの区切り専用。トリガーには使わせない
+            // （設定で "Space" を指定しても区切り機能を優先）。
+            if (*vk == static_cast<WPARAM>(VK_SPACE)) continue;
+            vks.insert(*vk);
+        }
     }
-    if (vks.empty()) vks.insert(static_cast<WPARAM>(VK_SPACE));  // 安全側
+    if (vks.empty()) vks.insert(static_cast<WPARAM>(VK_TAB));  // 安全側（既定トリガー）
     return vks;
 }
 

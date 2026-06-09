@@ -10,9 +10,14 @@ TEST_CASE("Character は常に Append") {
     CHECK(Decide(KeyKind::Character, false) == InputAction::Append);
 }
 
-TEST_CASE("Trigger(Space): 非空なら Commit / 空なら PassThrough") {
+TEST_CASE("Trigger(Tab): 非空なら Commit / 空なら PassThrough") {
     CHECK(Decide(KeyKind::Trigger, false) == InputAction::Commit);
     CHECK(Decide(KeyKind::Trigger, true)  == InputAction::PassThrough);
+}
+
+TEST_CASE("Space(区切り): 非空なら Append / 空なら PassThrough") {
+    CHECK(Decide(KeyKind::Space, false) == InputAction::Append);
+    CHECK(Decide(KeyKind::Space, true)  == InputAction::PassThrough);
 }
 
 TEST_CASE("Backspace: 非空なら DeleteLast / 空なら PassThrough") {

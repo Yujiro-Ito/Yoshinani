@@ -7,10 +7,11 @@ namespace yoshinani::core::domain {
 
 // infra が VK + 修飾キーから正規化して渡すキー種別。
 //   Trigger は「確定の合図」。どのキーを Trigger とみなすかは infra 側の
-//   トリガーキー一覧で決める（現状 Space のみ。後から追加可能）。
+//   トリガーキー一覧（設定）で決める（既定 Tab。後から追加可能）。
 enum class KeyKind {
     Character,   // 通常文字（preedit に足す。文字値は別途渡す）
-    Trigger,     // 確定トリガー（現状 Space）
+    Trigger,     // 確定トリガー（既定 Tab）
+    Space,       // 区切りの空白。preedit 中のみ足す（空のときは素通し）
     Backspace,
     Escape,
     Other,       // 自分は扱わない

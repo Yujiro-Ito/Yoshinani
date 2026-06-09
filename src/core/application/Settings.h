@@ -9,12 +9,13 @@ namespace yoshinani::core::application {
 
 struct Settings {
     // 確定トリガーのキー名（ポータブルな名前。各OSのキーコードへは infra が対応づける）。
-    // 例: "Space" / "Period"(。) / "Comma"(、) / "Tab" / "Enter"
-    std::vector<std::string> triggerKeys{ "Space" };
+    // 例: "Tab" / "Period"(。) / "Comma"(、) / "Space" / "Enter"
+    // 既定は Tab。Space は分かち書きの区切りに使うためトリガーにしない。
+    std::vector<std::string> triggerKeys{ "Tab" };
 };
 
 // JSON テキストから Settings を構築する。
-// 空文字・不正JSON・キー欠落のときは既定値（triggerKeys = ["Space"]）にフォールバックし、
+// 空文字・不正JSON・キー欠落のときは既定値（triggerKeys = ["Tab"]）にフォールバックし、
 // 例外は投げない（IME 内で安全に呼べるようにするため）。
 Settings ParseSettings(const std::string& jsonText);
 

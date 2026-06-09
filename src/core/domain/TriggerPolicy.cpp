@@ -9,6 +9,9 @@ InputAction Decide(KeyKind kind, bool preeditEmpty) noexcept {
             return InputAction::Append;
         case KeyKind::Trigger:
             return preeditEmpty ? InputAction::PassThrough : InputAction::Commit;
+        case KeyKind::Space:
+            // 区切り空白: 入力中なら preedit に足す。空のときは通常の空白として素通し。
+            return preeditEmpty ? InputAction::PassThrough : InputAction::Append;
         case KeyKind::Backspace:
             return preeditEmpty ? InputAction::PassThrough : InputAction::DeleteLast;
         case KeyKind::Escape:
