@@ -92,13 +92,29 @@ void UnregisterProfiles() {
     }
 }
 
+// 登録するカテゴリ一覧。
+//   - GUID_TFCAT_TIP_KEYBOARD          : キーボード TIP（必須）
+//   - GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT: イマーシブ／パッケージ系アプリ
+//       （Win11 の新メモ帳・ストアアプリ等）で入力エンジンとして選ばれるための宣言。
+//       これが無いと従来型 Win32 アプリでしか有効化されない（メモ帳で素通りする原因）。
+//   - GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT : システムトレイ（言語切替 UI）対応の宣言。
+static const GUID* const c_supportedCategories[] = {
+    &GUID_TFCAT_TIP_KEYBOARD,
+    &GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+    &GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+};
+
 BOOL RegisterCategories() {
     ITfCategoryMgr* pCat = nullptr;
     if (FAILED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_ITfCategoryMgr, reinterpret_cast<void**>(&pCat)))) {
         return FALSE;
     }
-    HRESULT hr = pCat->RegisterCategory(CLSID_Yoshinani, GUID_TFCAT_TIP_KEYBOARD, CLSID_Yoshinani);
+    HRESULT hr = S_OK;
+    for (const GUID* cat : c_supportedCategories) {
+        HRESULT h = pCat->RegisterCategory(CLSID_Yoshinani, *cat, CLSID_Yoshinani);
+        if (FAILED(h)) hr = h;  // いずれか失敗したら失敗扱い（最後のエラーを保持）
+    }
     pCat->Release();
     return SUCCEEDED(hr);
 }
@@ -107,7 +123,9 @@ void UnregisterCategories() {
     ITfCategoryMgr* pCat = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                    IID_ITfCategoryMgr, reinterpret_cast<void**>(&pCat)))) {
-        pCat->UnregisterCategory(CLSID_Yoshinani, GUID_TFCAT_TIP_KEYBOARD, CLSID_Yoshinani);
+        for (const GUID* cat : c_supportedCategories) {
+            pCat->UnregisterCategory(CLSID_Yoshinani, *cat, CLSID_Yoshinani);
+        }
         pCat->Release();
     }
 }
