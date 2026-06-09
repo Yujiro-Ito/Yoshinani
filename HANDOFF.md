@@ -5,7 +5,7 @@
 ## 0. これは何
 ローマ字を適当に打ち、**Tab で一括変換＋自動確定**する自作 Windows IME（TSF / C++）。
 変換は**ローカル汎用LLM（Gemma 4）にローマ字を直渡し**して日本語にする（B方式）。
-詳細仕様は MAIN_SPEC。リポジトリ: GitHub `Yujiro-Ito/Yoshinani`（`main`、ここまで全 push 済み・最新 `83ebba7`）。
+詳細仕様は MAIN_SPEC。リポジトリ: GitHub `Yujiro-Ito/Yoshinani`（`main`、push 済み。最新ハッシュは `git log --oneline` 参照）。
 
 ---
 
@@ -29,7 +29,7 @@
   - **Win11 新メモ帳など標準アプリ = TIP が入力に engage しない**: キーが全く eaten されず素通し（直接入力・下線なし・Tab/Esc 無反応）。DLL 自体はメモ帳にもロードされる（列挙目的）が `OnKeyDown` が発火していない。
 - **🔴 既知課題: 標準 Win32/パッケージアプリでの TIP 非 engage**。`GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT` + `SYSTRAYSUPPORT` をカテゴリ登録に追加したが**それだけでは未解決**（必要だが不十分）。残る有力候補: キーボード open/close コンパートメント未設定 / フォーカス・表示属性まわりの実装不足。次に着手するなら **TIP に軽量ログ（Activate/OnKeyDown の発火をアプリ別に記録）で局所化**が確実。**ユーザー判断で当面保留 → Phase 3（B 方式の本丸）を優先**。
 - **DLL ロックは広範化**: register により `yoshinani.dll` が explorer.exe / Chrome / Unity / Claude などに常駐ロード。元パス `build/ninja-debug/.../yoshinani.dll` は reboot 級でないと再リンク不可。→ 当面は **`build.ps1 -BuildDir build/ninja-fix` 等の別ディレクトリ出力で回避**（実施済み）。恒久対策案（ビルド出力とは別ファイルを登録して「ビルド出力＝誰もロードしない」分離）は保留中。「毎回ユニーク名コピー」案は増え続けるため不採用で確定。
-- **現在 IME は登録されたまま**（新パス `build/ninja-fix/src/tsf/yoshinani.dll`、イマーシブ互換カテゴリ付き）。Chromium 系で動くので Phase 3 開発に使える。不要になったら `regsvr32 /u`。
+- **現在 IME は登録されたまま**（変換結線版 `build/ninja-run1/src/tsf/yoshinani.dll`）。Chromium 系で **romaji→Tab→Gemma→日本語確定が実動作**。再ビルドは別 dir 必須（ロック）。不要になったら `regsvr32 /u`。ビルド dir が複数できている（ninja-debug/fix/run1/run2）が gitignore 配下・再起動で掃除可。
 
 ---
 
@@ -49,6 +49,7 @@
 - **E4B > E2B**（E2B は homograph 誤読・脱落。E4B で克服）。残課題: 英単語ホモグラフ（`node`=ので→ノード 等、ごく一部）。
 - 効いたプロンプト: LazyJP式 ＋「入力全体を漏れなく・忠実に・言い換え禁止・英語/専門用語は Latin 正規化」＋少数例。詳細は [3-B](.spec/sub-specs/phase3-zenz-daemon.md) の実測表。
 - **先行例 LazyJP**（`raspy135/lazyjp-vscode`）: romaji→クラウドLLM直変換・トリガー一括・**背景書き換え（async）**・継続モード（文脈チェイン）・`/rule` インラインルール。盗む価値あり。
+- **追試(2026-06-09・IME 実結線後)**: 空白なし入力はプロンプトで「分かち書きを推測」と明示しても E4B では不安定（4例中2例誤り: 例 `henkan`→返金/変更）。→ 「手動スペース不要」にするには上位モデル（クラウド GPT 等）が要る、と判断。クラウド API は安価（Nano 月~$2.3）で、論点はコストよりプライバシー/遅延/「ローカル前提」を崩すか（§5 の次セッション実験へ）。
 
 ---
 
@@ -56,7 +57,16 @@
 1. ~~Tab/Space 実機確認~~ **完了（2026-06-09）**: Chromium/Electron 系で Tab 確定 / Space 区切り / Esc 取消を目視 OK。標準アプリ（新メモ帳等）での TIP 非 engage は**既知課題として保留**（§2）。再ビルドは DLL ロックのため `build.ps1 -BuildDir <別dir>` で回避する。
 2. **Phase 2（romaji→kana）は格下げ**: B方式では主経路に不要（zenz fallback / かな表示のときだけ）。preedit は生ローマ字表示でよい。**飛ばして Phase 3 に行ってよい**。
 3. **Phase 3（本丸＝Gemma を IME に結線）**:
-   - **進捗(2026-06-09)**: ✅ **3-A ポート + 3-D キュー + ユニットテスト実装・ctest 緑**（`src/core/domain/ports/IKanaKanjiConverter.h` / `src/core/application/ConversionQueue.{h,cpp}` / `tests/core/test_conversion_queue.cpp`）。変換経路は**ユーザー判断で「仕様どおり自作 llama.cpp デーモン+名前付きパイプ」**（Ollama 代用ではない）。**次**: 3-C パイプ層（プロトコル+`PipeKanaKanjiConverter`+スタブ daemon で往復検証）→ 3-B 実 llama.cpp+Gemma GGUF（重い・要 CUDA 確認/GGUF 配置）→ 3-E TIP 結線。注: 再ビルドは `build.ps1 -Target yoshinani.core.tests` で core だけなら DLL ロック無関係に回せる。
+   - **進捗(2026-06-09)**: ✅ 3-A ポート + 3-D キュー + ユニットテスト（ctest 緑）。✅ **3-E 結線済（Ollama 代用バックエンド）= IME で romaji→Tab→Gemma→確定が Chromium 系で実動作**（commit `12f04c2`）。`src/ipc/OllamaKanaKanjiConverter`（WinHTTP→Ollama `/api/chat`）を `IKanaKanjiConverter` 実装として `TextService` に注入し、確定経路で同期変換→`CommitText` で結果確定（失敗時は生ローマ字フォールバック）。
+     - 経緯: 当初ユーザーは「仕様どおり自作 llama.cpp デーモン+パイプ」を選択したが、**「今すぐ動作確認したい」を優先**し、ポートの裏に **Ollama 代用**を入れて最短で testable に到達。自作デーモン(3-B)+名前付きパイプ(3-C)は**同ポートで後から差し替え**る方針（未着手）。
+     - 実機所感: 空白区切りなら実用。**空白なしは E4B では分割不安定**（プロンプト改善でも 2/4 誤り）。手動スペースの負担＝小モデルの限界とユーザーも認識。記号入力不可（R2 未実装）がストレス点。
+     - 残債: `TextService` が具体実装(Ollama)を直接 new（ポート経由 DI でない）。バックエンド選択は将来 Factory/設定で。再ビルドは core のみなら `build.ps1 -Target yoshinani.core.tests`、DLL は別 dir で。
+   - **▶ 次セッションの最優先: クラウド変換 A/B（GPT-5.4 Nano）**。目的＝賢いモデルで「手動スペース」負担が消えるか検証し、**ローカル(プライバシー) vs クラウド(品質/UX)** を判断する。
+     1. **API キー**: `%USERPROFILE%\.yoshinani\openai.key` に1行で配置（**リポジトリ外・コミット禁止・コード/ログ/出力に出さない**）。ディレクトリ作成済み。
+     2. **モデルID 特定**: `GET https://api.openai.com/v1/models` で「5.4 Nano」の正確な id を確認（`gpt-5.4-nano` 等か不明）。価格(2026-06): Nano $0.20/$1.25 per 1M → 1変換 ~$0.00008 → 月3万変換 ~$2.3。常時 GPU レンタルは不経済($300+/月)＝やるなら API 一択。
+     3. **PowerShell で A/B 実測**: 空白なし入力で nano vs E4B を比較（nano が分割を解決するか）。
+     4. 良ければ **`OpenAiKanaKanjiConverter`（HTTPS WinHTTP・`Authorization: Bearer`・`/v1/chat/completions`・同じ `IKanaKanjiConverter` ポート）を実装** → ipc 追加 → バックエンド選択（settings or define）→ 別 dir ビルド→登録→ IME で体感。
+     5. 注意: GPT-5 系は temperature 既定固定/`max_completion_tokens` 等パラメータ差に注意。キーは環境変数 or ファイル読みで、**絶対にコミット/出力しない**。
    - 3-A: `IKanaKanjiConverter` ポート（**モデル非依存・romaji を渡せる形**・request_id 付き非同期IF）。
    - 3-B: デーモン = llama.cpp + Gemma 4 E4B GGUF（まずは Ollama で代用可）。**think=false / 常駐(keep_alive) / num_ctx 2048**。プロンプトは §4 のもの。
    - 3-C: 名前付きパイプ IPC（TIP↔デーモン）。デーモン不在時は生ローマ字 or かなで確定するフォールバック。
@@ -78,10 +88,8 @@
 ---
 
 ## 7. git 状態
-- `main` ブランチ、最新 `83ebba7`。
-- **未コミットの変更あり（2026-06-09・未レビュー/未コミット）**。コミットするなら規約どおり先にコードレビュー要。論理的には3コミットに割れる:
-  1. TSF: `src/tsf/Register.cpp`（イマーシブ/トレイ互換カテゴリ登録の追加。標準アプリ engage 改善の一手だが単体では未解決）
-  2. tooling: `scripts/build.ps1`（`-BuildDir` + `-Target` 追加。DLL ロック回避）
-  3. Phase 3 土台: `src/core/domain/ports/IKanaKanjiConverter.h`、`src/core/application/ConversionQueue.{h,cpp}`、`tests/core/test_conversion_queue.cpp`、`src/core/CMakeLists.txt`・`tests/core/CMakeLists.txt`（ファイル追加）
-  - その他: `.spec/sub-specs/`（1-B/1-C/新規1-D/README・入力要件）と `HANDOFF.md` は .md（レビュー不要）。`build/ninja-fix/` は gitignore 配下。
+- `main` ブランチ。本セッション（2026-06-09）で以下を追加・**全 push 済み**（ハッシュは `git log --oneline` 参照）:
+  - TSF イマーシブ/トレイ互換カテゴリ（`Register.cpp`）/ `build.ps1` に `-BuildDir`・`-Target`（DLL ロック回避）/ Phase 3 土台 3-A・3-D＋テスト / 入力要件 spec 反映(1-B/1-C/新規1-D) / **3-E 変換結線（Ollama 代用）**。
+- 残債: ① `TextService` が ipc 具体実装(Ollama)を直接 new（バックエンド選択は未実装） ② 標準アプリ TIP 非 engage（§2） ③ R1/R2/Enter/1-D 入力拡張は未実装。
+- `build/ninja-*`（debug/fix/run1/run2）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。
