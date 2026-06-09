@@ -18,15 +18,18 @@
 
 ## 2. 現在地（実装済み・検証済み）
 - **Phase 0（足場）完了**: ライト DDD レイヤを CMake ターゲットに分割（`yoshinani.core` / `.ipc` / `.tsf`=DLL / tests）。`scripts/build.ps1` で **vcvars 読込→cmake→ninja→ctest を1コマンド**（自己完結ループ）。
-- **Phase 1（最小TIP）完了・実機確認済み**: COM登録＋TSFプロファイル(ja-JP)登録、preedit 表示、トリガー確定。以前メモ帳で `aiueo`+確定が動くのを目視済み。
+- **Phase 1（最小TIP）完了・実機確認済み（Chromium/Electron 系のみ）**: COM登録＋TSFプロファイル(ja-JP)登録、preedit 表示、Tab トリガー確定、Space 区切り、Esc 取消。**ただし標準アプリ（Win11 新メモ帳等）では TIP が未 engage（§2 既知課題）**。
 - **設定分離**: トリガーキーを `settings.json`(JSON, nlohmann) に分離（`core/application/Settings` + `src/tsf/KeyMap`）。
 - **トリガー = Tab、Space = 分かち書きの区切り**（最新コミット 83ebba7）。理由は §4 参照。
 - **変換方針 決定済み**: B方式（romaji→汎用LLM直渡し）。モデル = **Gemma 4 E4B-it-qat**（ローカル・GGUF・Apache 2.0）、**思考オフ(think=false)必須**。
 
-### ⚠ 未検証の保留（次セッション最優先で消化）
-- **Tab/Space のランタイム挙動は未確認**。理由: ビルド時に `yoshinani.dll` が**この Claude Code プロセスにロードされてロック**され、DLL を再リンクできなかった（`LNK1168`。コードは全コンパイルOK・core ctest 緑）。
-- **次セッションは別プロセス＝このロックが無い**はず。`pwsh -File scripts/build.ps1`（クリーンに通るはず）→ 後述の手順で実機確認できる。
-- IME は以前 `Unregister` 済み（登録は残っていないはず。`verify-ime.ps1 -Action Check` で確認）。
+### 検証結果（2026-06-09）と既知課題
+- **Tab/Space ランタイム確認を実施**。結果は**アプリ依存**:
+  - **Chromium/Electron 系（Claude アプリ・VSCode・Chrome 等）= 完全動作**: 下線付き preedit / Space が区切りとして preedit に入る / Tab 確定 / Esc 取消、すべて目視 OK。**Phase 3 はこの環境で開発・検証できる**。
+  - **Win11 新メモ帳など標準アプリ = TIP が入力に engage しない**: キーが全く eaten されず素通し（直接入力・下線なし・Tab/Esc 無反応）。DLL 自体はメモ帳にもロードされる（列挙目的）が `OnKeyDown` が発火していない。
+- **🔴 既知課題: 標準 Win32/パッケージアプリでの TIP 非 engage**。`GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT` + `SYSTRAYSUPPORT` をカテゴリ登録に追加したが**それだけでは未解決**（必要だが不十分）。残る有力候補: キーボード open/close コンパートメント未設定 / フォーカス・表示属性まわりの実装不足。次に着手するなら **TIP に軽量ログ（Activate/OnKeyDown の発火をアプリ別に記録）で局所化**が確実。**ユーザー判断で当面保留 → Phase 3（B 方式の本丸）を優先**。
+- **DLL ロックは広範化**: register により `yoshinani.dll` が explorer.exe / Chrome / Unity / Claude などに常駐ロード。元パス `build/ninja-debug/.../yoshinani.dll` は reboot 級でないと再リンク不可。→ 当面は **`build.ps1 -BuildDir build/ninja-fix` 等の別ディレクトリ出力で回避**（実施済み）。恒久対策案（ビルド出力とは別ファイルを登録して「ビルド出力＝誰もロードしない」分離）は保留中。「毎回ユニーク名コピー」案は増え続けるため不採用で確定。
+- **現在 IME は登録されたまま**（新パス `build/ninja-fix/src/tsf/yoshinani.dll`、イマーシブ互換カテゴリ付き）。Chromium 系で動くので Phase 3 開発に使える。不要になったら `regsvr32 /u`。
 
 ---
 
@@ -50,15 +53,17 @@
 ---
 
 ## 5. これから（推奨ロードマップ）
-1. **【最優先】Tab/Space を実機確認**: アプリ再起動済の今 → `scripts/build.ps1`（DLL 再リンク通るはず）→ `verify-ime.ps1 -Action Register`（UAC）→ メモ帳で「ローマ字を空白区切りで打つ → Tab で確定」「Space が区切りとして preedit に入る」を確認 → `-Action Unregister`。
+1. ~~Tab/Space 実機確認~~ **完了（2026-06-09）**: Chromium/Electron 系で Tab 確定 / Space 区切り / Esc 取消を目視 OK。標準アプリ（新メモ帳等）での TIP 非 engage は**既知課題として保留**（§2）。再ビルドは DLL ロックのため `build.ps1 -BuildDir <別dir>` で回避する。
 2. **Phase 2（romaji→kana）は格下げ**: B方式では主経路に不要（zenz fallback / かな表示のときだけ）。preedit は生ローマ字表示でよい。**飛ばして Phase 3 に行ってよい**。
 3. **Phase 3（本丸＝Gemma を IME に結線）**:
+   - **進捗(2026-06-09)**: ✅ **3-A ポート + 3-D キュー + ユニットテスト実装・ctest 緑**（`src/core/domain/ports/IKanaKanjiConverter.h` / `src/core/application/ConversionQueue.{h,cpp}` / `tests/core/test_conversion_queue.cpp`）。変換経路は**ユーザー判断で「仕様どおり自作 llama.cpp デーモン+名前付きパイプ」**（Ollama 代用ではない）。**次**: 3-C パイプ層（プロトコル+`PipeKanaKanjiConverter`+スタブ daemon で往復検証）→ 3-B 実 llama.cpp+Gemma GGUF（重い・要 CUDA 確認/GGUF 配置）→ 3-E TIP 結線。注: 再ビルドは `build.ps1 -Target yoshinani.core.tests` で core だけなら DLL ロック無関係に回せる。
    - 3-A: `IKanaKanjiConverter` ポート（**モデル非依存・romaji を渡せる形**・request_id 付き非同期IF）。
    - 3-B: デーモン = llama.cpp + Gemma 4 E4B GGUF（まずは Ollama で代用可）。**think=false / 常駐(keep_alive) / num_ctx 2048**。プロンプトは §4 のもの。
    - 3-C: 名前付きパイプ IPC（TIP↔デーモン）。デーモン不在時は生ローマ字 or かなで確定するフォールバック。
    - 3-E: **Tab → preedit の空白区切りローマ字を Gemma へ → 結果を確定して手放す**。失敗時フォールバック。
    - **4-A（async/背景変換）は早めに重要**: 変換 ~1s なので、LazyJP 同様「待たずに打ち続け、結果が後着」にしたい（§6.5 の継ぎ目を実働）。
 4. 任意: zenz 速い道（全部日本語＝数十ms）を二段目に。英数密の空白なし弱点は「直すなら既存IME」哲学で許容。
+5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**: R1 Shift で大文字 / R2 記号も preedit に入力（→ [1-B](.spec/sub-specs/phase1-preedit-lifecycle.md)、`ToUnicodeEx` で打鍵文字取得）/ Enter は Google 日本語入力準拠＝composition 中は生確定・空なら改行（→ [1-C](.spec/sub-specs/phase1-trigger-commit.md)）/ 変換⇄直接の入力モード切替（→ 新規 [1-D](.spec/sub-specs/phase1-input-mode.md)。**open/close 実装は §2 の標準アプリ非 engage 改善の候補**）。いずれも未実装。
 
 ---
 
@@ -73,5 +78,10 @@
 ---
 
 ## 7. git 状態
-- `main` ブランチ、最新 `83ebba7`、全て push 済み。未コミットは（このHANDOFF.md を除き）なし。
+- `main` ブランチ、最新 `83ebba7`。
+- **未コミットの変更あり（2026-06-09・未レビュー/未コミット）**。コミットするなら規約どおり先にコードレビュー要。論理的には3コミットに割れる:
+  1. TSF: `src/tsf/Register.cpp`（イマーシブ/トレイ互換カテゴリ登録の追加。標準アプリ engage 改善の一手だが単体では未解決）
+  2. tooling: `scripts/build.ps1`（`-BuildDir` + `-Target` 追加。DLL ロック回避）
+  3. Phase 3 土台: `src/core/domain/ports/IKanaKanjiConverter.h`、`src/core/application/ConversionQueue.{h,cpp}`、`tests/core/test_conversion_queue.cpp`、`src/core/CMakeLists.txt`・`tests/core/CMakeLists.txt`（ファイル追加）
+  - その他: `.spec/sub-specs/`（1-B/1-C/新規1-D/README・入力要件）と `HANDOFF.md` は .md（レビュー不要）。`build/ninja-fix/` は gitignore 配下。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。

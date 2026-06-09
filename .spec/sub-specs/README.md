@@ -44,6 +44,7 @@ pwsh -File scripts/verify-ime.ps1 -Action Check   # TSF ランタイム確認の
 | **1-A** | [TSF スケルトン & COM 登録](phase1-tsf-skeleton.md) | Step1 §7 | ✅ 作成済 |
 | **1-B** | [preedit ライフサイクル](phase1-preedit-lifecycle.md) | Step1 §7 | ✅ 作成済 |
 | **1-C** | [トリガー確定](phase1-trigger-commit.md) | Step1 §5,§7 | ✅ 作成済 |
+| **1-D** | [入力モード切替（変換/直接・Google IME 準拠）](phase1-input-mode.md) | Step1+ | 🆕 要件記録(2026-06-09) |
 | 2-A | [romaji→kana 決定的変換](phase2-romaji-kana.md) | Step2 | ✅ 作成済 |
 | 2-B | [preedit への結線](phase2-preedit-integration.md) | Step2 | ✅ 作成済 |
 | 3-A | [変換ポート抽象（request_id 付き非同期IF / §6.5①）](phase3-converter-port.md) | Step3 | ✅ 作成済 |
@@ -58,6 +59,11 @@ pwsh -File scripts/verify-ime.ps1 -Action Check   # TSF ランタイム確認の
 | 4-E | [Android アダプタ](phase4-android-adapter.md) | Step4,§8 | ✅ 作成済 |
 
 ★ **Phase 1〜3 でプロダクト完結**。Phase 4 は全て「あったら嬉しい」枠。
+
+> 📌 入力リッチ化の追加要件(2026-06-09): **R1 Shift で大文字 / R2 記号も preedit に入力**は
+> [1-B preedit ライフサイクル](phase1-preedit-lifecycle.md#拡張要件2026-06-09-追加--b方式の入力リッチ化)、
+> **Enter の Google IME 準拠挙動**は [1-C トリガー確定](phase1-trigger-commit.md) に追記済み。
+> **入力モード切替**は新規 [1-D](phase1-input-mode.md)。いずれも未実装。
 
 ## 実装順序（推奨）
 

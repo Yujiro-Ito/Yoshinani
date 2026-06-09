@@ -115,6 +115,27 @@ OnKeyDown(wParam=VK, ...)
 | `InputSession.CommitCurrent()` 等の協調 | application |
 | VK 正規化・EndComposition・range 操作 | infrastructure（TSF） |
 
+## 拡張要件: Enter の挙動（2026-06-09 追加 — Google 日本語入力準拠）
+
+> 要望: Enter を Google 日本語入力（Mozc）と同じ挙動にしたい。
+
+- **composition 中**: Enter は **今の preedit を「打ったそのまま」生確定**（**変換しない**）し、**改行は出さない**。
+  - Google IME 準拠の解釈: Enter は「未確定文字列の確定」。確定後（preedit 空）の Enter は通常の改行。
+  - B方式の「変換して確定」は **Tab**。Enter は「変換せず今の preedit をそのまま確定」＝ローマ字/記号のまま入れたい時の確定手段。
+- **composition なし（preedit 空）**: Enter は**食わず素通し**＝アプリ標準の改行。
+- 実装: `KeyKind` に `Enter` を追加し、`Decide`:
+  - `Enter` × preedit 非空 → 新アクション `CommitRaw`（変換なし生確定・EndComposition）
+  - `Enter` × preedit 空 → `PassThrough`
+- Tab（変換確定）も Enter（生確定）も **`CommitCurrent()` 集約口**を通す（複数箇所から EndComposition しない）。
+
+### 受け入れ条件（追加）
+- [ ] preedit 非空で Enter → 下線が消え、打った文字が**変換されずそのまま**確定（改行なし）
+- [ ] preedit 空で Enter → 通常の改行
+- [ ] Tab（変換確定）と Enter（生確定）が共存して期待どおり動く
+
+### TBD（Enter）
+- Enter を「生確定」とするか「変換して確定（Tab と同義）」とするか。現状は **Google IME 準拠＝表示中の preedit をそのまま確定（変換なし）** と解釈。要ユーザー確認。
+
 ## 受け入れ条件（MAIN_SPEC §7 より）
 
 - [ ] トリガー（`。`/`、`/`Shift+Tab`）で下線が消え、打った英字が**そのまま確定**してアプリに残る
