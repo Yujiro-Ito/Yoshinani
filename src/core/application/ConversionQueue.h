@@ -32,10 +32,28 @@ public:
 
     bool Empty() const noexcept { return items_.empty(); }
     std::size_t Size() const noexcept { return items_.size(); }
-    bool Full() const noexcept { return items_.size() >= capacity_; }
+    // 満杯判定は「変換中(Pending)の件数」で測る（同時変換数のバックプレッシャ）。
+    // 確定済みリテラル（改行・生確定セグメント・PushCommitted）は API を呼ばないので数えない。
+    bool Full() const noexcept {
+        std::size_t pending = 0;
+        for (const auto& r : items_) if (r.state == ConvState::Pending) ++pending;
+        return pending >= capacity_;
+    }
 
-    // 満杯なら false（v1: 容量1なので未確定が1件あると弾く）。
+    // 満杯（Pending が容量に達している）なら false。
     bool TryEnqueue(ConversionRequest req);
+
+    // 確定済みリテラル（改行や生確定テキスト）を投入順の末尾に積む（1-D Enter）。
+    // 変換を介さず即 Done。Full 制限は受けない（API を消費しないため）。
+    // PopReadyInOrder で他のセグメントと同じく「投入順」に確定される＝打った位置を厳守。
+    void PushCommitted(RequestId id, std::u16string text) {
+        ConversionRequest r;
+        r.id = id;
+        r.source = text;
+        r.state = ConvState::Done;
+        r.result = std::move(text);
+        items_.push_back(std::move(r));
+    }
 
     // id（Pending のもの）を Done/Failed に遷移。該当する Pending が無ければ false
     //   （未知 id、または既に終端状態＝二重マーク防止）。状態遷移は一方向。

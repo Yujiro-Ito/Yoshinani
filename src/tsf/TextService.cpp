@@ -551,21 +551,31 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
     // pop は edit session の中で行う: session 要求が失敗しても結果はキューに残り、
     // 次の結果到着時に再試行できる（先に pop すると失敗時に入力が無言で消える）。
     RequestEditSession(m_pContext, [this](TfEditCookie ec) -> HRESULT {
-        if (!m_pComposition || !m_pContext) return S_OK;
+        return CommitReadyInOrder(ec, m_pContext);
+    });
+    // 全確定（CommitText が composition を終了）していたら context を手放す。
+    if (!m_pComposition) ReleaseContext();
+}
 
+// 投入順に「先頭から連続して終わっている分」を確定する（変換結果到着・Enter の共通経路）。
+HRESULT CTextService::CommitReadyInOrder(TfEditCookie ec, ITfContext* pic) {
+    if (!m_pComposition || !pic) return S_OK;
+
+    {
         // 投入順に「先頭から連続して終わっている分」だけ確定する（追い越し禁止・§6.5 ③）。
         std::u16string committed;
         while (auto req = m_queue.PopReadyInOrder()) {
             committed += (req->state == ConvState::Done) ? req->result
                                                          : req->source;  // 失敗は生ローマ字
         }
-        if (committed.empty()) return S_OK;  // 先頭がまだ変換中（表示はソースのまま変化なし）
+        // 先頭がまだ変換中で確定できる分が無い → preedit 表示だけ更新
+        //   （Enter で積んだ改行/生確定セグメントを「打った位置」に見せるため）。
+        if (committed.empty()) return UpdateText(ec, pic);
 
-        // 状態はラムダ実行時点で評価する（キャプチャ時点とずれないように）。
         if (AllEmpty()) {
             // 全確定: composition 全体を確定文字列で置換して終了。
             m_history.Push(committed);  // 継続モード: 確定文を次の変換の文脈に
-            CommitText(ec, m_pContext, committed);
+            CommitText(ec, pic, committed);
             return S_OK;
         }
 
@@ -581,7 +591,7 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
 
         // 旧属性を一掃（確定分に下線を残さない・4-B）。
         ITfProperty* pProp = nullptr;
-        if (SUCCEEDED(m_pContext->GetProperty(GUID_PROP_ATTRIBUTE, &pProp))) {
+        if (SUCCEEDED(pic->GetProperty(GUID_PROP_ATTRIBUTE, &pProp))) {
             pProp->Clear(ec, pRange);
             pProp->Release();
         }
@@ -607,7 +617,7 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
             m_queue.Clear();
             m_session.Clear();
             m_history.Push(full);  // フォールバック全確定も文脈に（継続モード）
-            CommitText(ec, m_pContext, full);
+            CommitText(ec, pic, full);
             return S_OK;
         }
         m_history.Push(committed);  // 部分確定した分も文脈に（継続モード）
@@ -617,8 +627,8 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
         if (SUCCEEDED(m_pComposition->GetRange(&pCompRange))) {
             const LONG total = static_cast<LONG>(remaining.text.size());
             const LONG conv  = static_cast<LONG>(remaining.convertingLen);
-            ApplyAttribute(ec, m_pContext, pCompRange, 0, conv, m_attrConverting);
-            ApplyAttribute(ec, m_pContext, pCompRange, conv, total, m_attrInput);
+            ApplyAttribute(ec, pic, pCompRange, 0, conv, m_attrConverting);
+            ApplyAttribute(ec, pic, pCompRange, conv, total, m_attrInput);
 
             ITfRange* pSel = nullptr;
             if (SUCCEEDED(pCompRange->Clone(&pSel))) {
@@ -627,15 +637,13 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
                 ts.range = pSel;
                 ts.style.ase = TF_AE_NONE;
                 ts.style.fInterimChar = FALSE;
-                m_pContext->SetSelection(ec, 1, &ts);
+                pic->SetSelection(ec, 1, &ts);
                 pSel->Release();
             }
             pCompRange->Release();
         }
         return S_OK;
-    });
-    // 全確定（CommitText が composition を終了）していたら context を手放す。
-    if (!m_pComposition) ReleaseContext();
+    }
 }
 
 // ---- ITfKeyEventSink ---------------------------------------------------------
@@ -727,15 +735,25 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
             break;
         }
 
-        case InputAction::CommitRaw:
-            // Enter の挙動（2026-06-10 ユーザー要望）:
-            //   変換中（in-flight）が残っている間は確定も改行もせず無視＝バッファ保護。
-            //   変換は裏で進み完了時に自動確定し、取消は Esc だけが効く。
-            //   変換中が無く打鍵中(preedit)だけのときは従来どおり生確定（変換せず手放す）。
-            // ※ キーは eaten 済み（OnTestKeyDown が消費）なので、無視でもアプリへは流れない。
-            if (!m_queue.Empty()) break;  // 変換中あり → 無視
-            FlushAsRaw(pic);              // 打鍵中のみ → 生確定
+        case InputAction::CommitRaw: {
+            // Enter の挙動（2026-06-10 ユーザー要望）: 改行を「打った位置」に厳守して置く。
+            //   打鍵中(preedit)は生のまま確定し、その直後に改行を入れる。両方を投入順
+            //   キューに「確定済みセグメント」として積む＝前の変換中があればその後ろに並び、
+            //   投入順に確定される（位置厳守・捨てない）。前に変換中が無ければ即確定＝即改行。
+            //   改行は積んだ瞬間 preedit にも現れる（CommitReadyInOrder→UpdateText）。
+            if (!m_session.Empty()) {
+                m_queue.PushCommitted(m_nextRequestId++, m_session.Preedit());  // 生確定
+                m_session.Clear();
+            }
+            m_queue.PushCommitted(m_nextRequestId++, std::u16string(u"\n"));     // 改行
+            RetainContext(pic);
+            RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
+                if (!m_pComposition && FAILED(StartComposition(ec, pic))) return E_FAIL;
+                return CommitReadyInOrder(ec, pic);
+            });
+            if (!m_pComposition) ReleaseContext();
             break;
+        }
 
         case InputAction::Cancel:
             // Esc: 未確定区間（変換待ち含む）を丸ごと取消（4-A の全取消）。

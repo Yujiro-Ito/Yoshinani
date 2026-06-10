@@ -80,6 +80,10 @@ private:
     // 4-A: 変換結果の到着（marshaller 経由・TIP スレッド）。投入順に先頭セグメントを確定する。
     void OnConvertResult(yoshinani::core::domain::RequestId id,
                          yoshinani::core::domain::ConversionResult result);
+    // 4-A/1-D: 投入順に「先頭から連続して終わっている分」を確定する（edit session 内）。
+    //   変換結果到着時と Enter（改行/生確定セグメント追加）時の共通経路。
+    //   先頭がまだ変換中で確定できる分が無いときは preedit 表示だけ更新する。
+    HRESULT CommitReadyInOrder(TfEditCookie ec, ITfContext* pic);
 
     // 4-A: 打鍵中/変換待ちセグメントの有無（Decide の preeditEmpty に渡す）。
     bool AllEmpty() const { return m_queue.Empty() && m_session.Empty(); }
