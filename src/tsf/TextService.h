@@ -101,6 +101,9 @@ private:
     void FlushAsRaw(ITfContext* pic, bool fromSink = false);
     // 設定からモード切替キーの VK 集合を構築（半角/全角の VK 揺れをエイリアス展開）。
     std::set<WPARAM> LoadModeToggleVKs(const yoshinani::core::application::Settings& settings) const;
+    // 設定から「直接→変換」遷移キー / 「変換→直接」遷移キーを構築（Google 日本語入力流の片方向）。
+    std::set<WPARAM> LoadConversionOnVKs(const yoshinani::core::application::Settings& settings) const;
+    std::set<WPARAM> LoadDirectOnVKs   (const yoshinani::core::application::Settings& settings) const;
 
     // settings.json（DLL と同じディレクトリ）を読む。無い/不正なら既定値。
     yoshinani::core::application::Settings LoadSettings() const;
@@ -121,7 +124,9 @@ private:
     yoshinani::core::application::ContextHistory  m_history;  // 直前の確定文（継続モード）
     yoshinani::core::application::InputModeState  m_mode;     // 変換⇄直接（1-D）
     std::set<WPARAM> m_triggerVKs;     // 確定トリガー（設定由来。既定 = Tab）
-    std::set<WPARAM> m_modeToggleVKs;  // モード切替キー（設定由来。既定 = 半角/全角）
+    std::set<WPARAM> m_modeToggleVKs;  // モード切替キー（両方向トグル。既定 = 半角/全角）
+    std::set<WPARAM> m_conversionOnVKs;  // 直接モードで受けると変換モードへ（既定なし）
+    std::set<WPARAM> m_directOnVKs;      // 変換モードで受けると直接モードへ（既定なし）
 
     // 1-D: open/close コンパートメント（AddRef 保持・sink の advise cookie）
     ITfCompartment* m_pOpenClose = nullptr;

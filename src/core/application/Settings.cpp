@@ -23,6 +23,20 @@ Settings ParseSettings(const std::string& jsonText) {
             }
             if (!keys.empty()) s.modeToggleKeys = std::move(keys);
         }
+        // conversionOnKeys / directOnKeys は空配列でも「指定された」と尊重する
+        // （Google 日本語入力流の片方向遷移を有効化したいときは明示的に空でない配列を入れる）。
+        if (j.contains("conversionOnKeys") && j.at("conversionOnKeys").is_array()) {
+            s.conversionOnKeys.clear();
+            for (const auto& e : j.at("conversionOnKeys")) {
+                if (e.is_string()) s.conversionOnKeys.push_back(e.get<std::string>());
+            }
+        }
+        if (j.contains("directOnKeys") && j.at("directOnKeys").is_array()) {
+            s.directOnKeys.clear();
+            for (const auto& e : j.at("directOnKeys")) {
+                if (e.is_string()) s.directOnKeys.push_back(e.get<std::string>());
+            }
+        }
         if (j.contains("converter") && j.at("converter").is_object()) {
             const auto& c = j.at("converter");
             // 空文字は「指定なし」とみなし既定を保つ（タスクトレイ UI が部分的に書く場合に安全）。
@@ -47,8 +61,10 @@ Settings ParseSettings(const std::string& jsonText) {
 
 std::string SerializeSettings(const Settings& s) {
     nlohmann::json j;
-    j["triggerKeys"]    = s.triggerKeys;
-    j["modeToggleKeys"] = s.modeToggleKeys;
+    j["triggerKeys"]      = s.triggerKeys;
+    j["modeToggleKeys"]   = s.modeToggleKeys;
+    j["conversionOnKeys"] = s.conversionOnKeys;
+    j["directOnKeys"]     = s.directOnKeys;
     j["converter"] = {
         {"backend",         s.converter.backend},
         {"model",           s.converter.model},

@@ -191,9 +191,9 @@ constexpr int ID_MD_MODEL          = 402;
 constexpr int ID_MD_EFFORT         = 403;
 constexpr int ID_MD_EFFORT_LABEL   = 404;
 
-// タブインデックス
-constexpr int TAB_KEYMAP  = 0;
-constexpr int TAB_GENERAL = 1;
+// タブインデックス（General を最左に・初期表示）
+constexpr int TAB_GENERAL = 0;
+constexpr int TAB_KEYMAP  = 1;
 constexpr int TAB_MODEL   = 2;
 
 // ---- ウィンドウ状態 ----------------------------------------------------------
@@ -316,6 +316,9 @@ void HarvestForm() {
     auto& s = g_state->working;
     s.triggerKeys    = SplitCSV(Narrow(GetTextW(g_state->hKmTrigger)));
     s.modeToggleKeys = SplitCSV(Narrow(GetTextW(g_state->hKmMode)));
+    // NOTE: conversionOnKeys / directOnKeys は現状 UI に編集フィールドがないため
+    //       working の値をそのまま温存する（LoadIntoForm で JSON から読んだ値が残る）。
+    //       Keymap タブのキーキャプチャ UI 実装（#21）で個別フィールドを追加予定。
 
     s.converter.backend =
         (SendMessageW(g_state->hMdBackendL, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "ollama"
@@ -377,8 +380,8 @@ void CreateChildren(HWND hWnd) {
     SendMessageW(st->hTab, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
     TCITEMW it{};
     it.mask = TCIF_TEXT;
-    it.pszText = const_cast<wchar_t*>(L"Keymap");        TabCtrl_InsertItem(st->hTab, TAB_KEYMAP, &it);
     it.pszText = const_cast<wchar_t*>(L"General");       TabCtrl_InsertItem(st->hTab, TAB_GENERAL, &it);
+    it.pszText = const_cast<wchar_t*>(L"Keymap");        TabCtrl_InsertItem(st->hTab, TAB_KEYMAP, &it);
     it.pszText = const_cast<wchar_t*>(L"Model");         TabCtrl_InsertItem(st->hTab, TAB_MODEL, &it);
 
     // タブ内側矩形を取って、その中にコントロールを配置する。
@@ -398,6 +401,14 @@ void CreateChildren(HWND hWnd) {
                                  hi, nullptr);
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
         return h;
+    };
+    // 折返しを使う複数行ラベル（説明文用）。SS_LEFT は wrap する仕様。
+    auto mkHelp = [&](int y, int h, const wchar_t* text) {
+        HWND hw = CreateWindowExW(0, L"STATIC", text,
+                                  WS_CHILD | SS_LEFT,
+                                  X, y, CW, h, hWnd, nullptr, hi, nullptr);
+        SendMessageW(hw, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
+        return hw;
     };
     auto mkEdit = [&](int y, int id, DWORD extra = 0) {
         HWND h = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -441,7 +452,7 @@ void CreateChildren(HWND hWnd) {
     st->hKmTrigger    = mkEdit (Y0 + 20, ID_KM_TRIGGER);
     st->hKmModeLbl    = mkLabel(Y0 + 56,    0, L"モード切替キー（変換⇄直接。既定: Kanji ＝半角/全角）");
     st->hKmMode       = mkEdit (Y0 + 76, ID_KM_MODE);
-    st->hKmHelp       = mkLabel(Y0 + 116,   0,
+    st->hKmHelp       = mkHelp (Y0 + 116, 56,
         L"使えるキー名: Tab / Period(。) / Comma(、) / Kanji(半角/全角)\n"
         L"※ Space は分かち書き専用、Enter は生確定専用のためトリガーには使えません。");
 
@@ -450,7 +461,7 @@ void CreateChildren(HWND hWnd) {
     st->hGnPath       = mkEdit (Y0 + 20, ID_GN_PATH, ES_READONLY);
     st->hGnOpenJson   = mkButton(X,        Y0 + 56, 180, ID_GN_OPEN_JSON,   L"settings.json を開く");
     st->hGnOpenFolder = mkButton(X + 188,  Y0 + 56, 180, ID_GN_OPEN_FOLDER, L"設定フォルダを開く");
-    st->hGnHelp       = mkLabel(Y0 + 102,   0,
+    st->hGnHelp       = mkHelp (Y0 + 102, 64,
         L"変更は IME OFF→ON で TIP に反映されます。\n"
         L"%APPDATA%\\yoshinani\\settings.json が無ければ Apply 時に作成します。");
 
@@ -467,7 +478,7 @@ void CreateChildren(HWND hWnd) {
     st->hMdEffortLbl  = mkLabel(Y0 + 112,   ID_MD_EFFORT_LABEL, L"推論強度 (reasoningEffort):");
     st->hMdEffort     = mkCombo(Y0 + 132, 200, ID_MD_EFFORT);
 
-    st->hMdHelp       = mkLabel(Y0 + 172,   0,
+    st->hMdHelp       = mkHelp (Y0 + 172, 56,
         L"バックエンドを切替えるとモデルは「バックエンド既定」にリセットされます。\n"
         L"OpenAI モデル既定: gpt-5.4-mini / Ollama モデル既定: gemma4:e4b-it-qat。");
 
@@ -477,8 +488,8 @@ void CreateChildren(HWND hWnd) {
     st->hCancel = mkButton(W_MAIN - 188, BY, 80, ID_CANCEL, L"キャンセル");
     st->hOK     = mkButton(W_MAIN - 276, BY, 80, ID_OK,     L"OK");
 
-    ShowTab(TAB_MODEL);  // 最も触りたい設定を初期表示
-    TabCtrl_SetCurSel(st->hTab, TAB_MODEL);
+    ShowTab(TAB_GENERAL);  // General を初期表示（パス・操作の入口）
+    TabCtrl_SetCurSel(st->hTab, TAB_GENERAL);
 }
 
 LRESULT CALLBACK SettingsProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {

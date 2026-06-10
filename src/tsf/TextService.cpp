@@ -192,6 +192,26 @@ std::set<WPARAM> CTextService::LoadModeToggleVKs(
     return vks;
 }
 
+// 「直接→変換」遷移キー（Google 日本語入力流。空＝指定なし、その場合 modeToggle のみ機能）。
+std::set<WPARAM> CTextService::LoadConversionOnVKs(
+        const yoshinani::core::application::Settings& settings) const {
+    std::set<WPARAM> vks;
+    for (const std::string& name : settings.conversionOnKeys) {
+        if (auto vk = KeyNameToVk(name)) vks.insert(*vk);
+    }
+    return vks;
+}
+
+// 「変換→直接」遷移キー。
+std::set<WPARAM> CTextService::LoadDirectOnVKs(
+        const yoshinani::core::application::Settings& settings) const {
+    std::set<WPARAM> vks;
+    for (const std::string& name : settings.directOnKeys) {
+        if (auto vk = KeyNameToVk(name)) vks.insert(*vk);
+    }
+    return vks;
+}
+
 // 変換バックエンドの生成。model 空文字は「バックエンド既定」（Settings.h）。
 // A/B 実測（2026-06-10）より既定はクラウド openai gpt-5.4-mini + low
 // （空白なしローマ字を実質解決。ローカル派は settings.json で "ollama" に切替）。
@@ -216,8 +236,10 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (m_pThreadMgr) m_pThreadMgr->AddRef();
     m_tfClientId = tid;
     const auto settings = LoadSettings();
-    m_triggerVKs    = LoadTriggerVKs(settings);
-    m_modeToggleVKs = LoadModeToggleVKs(settings);
+    m_triggerVKs      = LoadTriggerVKs(settings);
+    m_modeToggleVKs   = LoadModeToggleVKs(settings);
+    m_conversionOnVKs = LoadConversionOnVKs(settings);
+    m_directOnVKs     = LoadDirectOnVKs(settings);
     m_converter     = CreateConverter(settings.converter);
 
     // 1-D: open/close コンパートメントを初期化（open=変換が既定）し、変更を購読する。
@@ -655,8 +677,17 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/) {
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM lParam,
                                          BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
-    // 1-D: モード切替キーは常に消費。直接入力モードは切替キー以外すべて素通し。
+    // 1-D: モード切替キー（両方向トグル）は常に消費。
     if (m_modeToggleVKs.count(wParam) != 0) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+    // 片方向遷移キー: 直接→変換 / 変換→直接（現在モードと噛み合うときだけ消費）。
+    if (m_mode.IsDirect() && m_conversionOnVKs.count(wParam) != 0) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+    if (!m_mode.IsDirect() && m_directOnVKs.count(wParam) != 0) {
         *pfEaten = TRUE;
         return S_OK;
     }
@@ -674,13 +705,22 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam,
                                      BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
-    // 1-D: モード切替（変換⇄直接）。未確定が残っていたら生確定してから切り替える。
-    if (m_modeToggleVKs.count(wParam) != 0) {
+    using yoshinani::core::application::InputMode;
+
+    // 1-D: モード遷移はトグル / 直接→変換 / 変換→直接 の 3 系統。
+    // どれにマッチしても未確定が残っていれば生確定してから切替（データ保護）、
+    // 順序固定: m_mode.Set / Toggle が先、SetOpenCloseCompartment は後
+    //         （SetOpenCloseCompartment が OnChange を同期発火させる場合があり、
+    //          逆順だと OnChange 側の Set 後にこちらの Set/Toggle が走り二重反転する）。
+    const bool isToggle    = (m_modeToggleVKs.count(wParam) != 0);
+    const bool isConvOn    = (m_mode.IsDirect()  && m_conversionOnVKs.count(wParam) != 0);
+    const bool isDirectOn  = (!m_mode.IsDirect() && m_directOnVKs.count(wParam) != 0);
+    if (isToggle || isConvOn || isDirectOn) {
         *pfEaten = TRUE;
         if (!AllEmpty()) FlushAsRaw(pic);
-        // 順序固定: Toggle() を先に行うこと。SetOpenCloseCompartment は OnChange を
-        // 同期発火させうるため、逆順にすると OnChange の Set 後に Toggle が走り二重反転する。
-        m_mode.Toggle();
+        if (isToggle)         m_mode.Toggle();
+        else if (isConvOn)    m_mode.Set(InputMode::Conversion);
+        else /* isDirectOn */ m_mode.Set(InputMode::Direct);
         SetOpenCloseCompartment(!m_mode.IsDirect());  // open = 変換（言語バー表示も同期）
         return S_OK;
     }
