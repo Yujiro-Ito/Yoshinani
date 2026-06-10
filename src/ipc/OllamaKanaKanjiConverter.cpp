@@ -18,18 +18,23 @@ OllamaKanaKanjiConverter::OllamaKanaKanjiConverter(std::wstring host, int port, 
     : host_(std::move(host)), port_(port), model_(std::move(model)) {}
 
 void OllamaKanaKanjiConverter::Convert(
-        RequestId id, std::u16string_view input,
+        RequestId id, const yoshinani::core::domain::ConversionInput& input,
         std::function<void(RequestId, ConversionResult)> onDone) {
-    const std::string in = U16ToU8(input);
+    const std::string in  = OneLine(U16ToU8(input.source));
+    const std::string ctx = OneLine(U16ToU8(input.context));
 
     // §4 実測で効いたプロンプト（LazyJP 式＋忠実変換＋Latin 正規化＋少数例）。
+    // 継続モード: 直前の確定文を文脈節として渡す（同音異義・専門語の精度向上）。
     // ※ /utf-8 でコンパイルするため日本語リテラルは UTF-8 で格納される。
-    const std::string prompt =
+    std::string prompt =
         "次の「空白区切りローマ字」を自然な日本語（漢字かな交じり）に変換してください。\n"
         "ルール: 入力を漏れなく忠実に変換し、言い換え・要約・補足説明をしない。"
         "英語/専門用語/固有名詞は Latin 文字のまま残す。出力は変換後の日本語のみ。引用符や説明を付けない。\n\n"
-        "例:\n入力: kyou ha openai de class wo tukutta\n出力: 今日はOpenAIでclassを作った\n\n"
-        "入力: " + in + "\n出力:";
+        "例:\n入力: kyou ha openai de class wo tukutta\n出力: 今日はOpenAIでclassを作った\n\n";
+    if (!ctx.empty()) {
+        prompt += "直前の文脈（語彙・話題の参考。出力には含めない）: " + ctx + "\n\n";
+    }
+    prompt += "入力: " + in + "\n出力:";
 
     nlohmann::json req;
     req["model"]                 = model_;

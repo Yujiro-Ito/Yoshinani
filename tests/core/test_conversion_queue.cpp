@@ -12,35 +12,39 @@
 using yoshinani::core::application::ConversionQueue;
 using yoshinani::core::application::ConversionRequest;
 using yoshinani::core::application::ConvState;
+using yoshinani::core::domain::ConversionInput;
 using yoshinani::core::domain::ConversionResult;
 using yoshinani::core::domain::IKanaKanjiConverter;
 using yoshinani::core::domain::RequestId;
 
 namespace {
 
-// input をそのまま「<input>。」に変換するだけの同期モック（3-A 実装の代役）。
+// source をそのまま「<source>。」に変換するだけの同期モック（3-A 実装の代役）。
 class MockConverter : public IKanaKanjiConverter {
 public:
-    void Convert(RequestId id, std::u16string_view input,
+    void Convert(RequestId id, const ConversionInput& input,
                  std::function<void(RequestId, ConversionResult)> onDone) override {
         ++calls;
-        onDone(id, ConversionResult{std::u16string(input) + u"。", true});
+        lastContext = input.context;
+        onDone(id, ConversionResult{input.source + u"。", true});
     }
     int calls = 0;
+    std::u16string lastContext;
 };
 
 }  // namespace
 
-TEST_CASE("3-A: モック変換器は同期で id と結果を callback に返す") {
+TEST_CASE("3-A: モック変換器は同期で id と結果を callback に返す（文脈も受け取る）") {
     MockConverter conv;
     RequestId gotId = 0;
     ConversionResult got;
-    conv.Convert(42, u"kyou ha ii tenki",
+    conv.Convert(42, ConversionInput{u"kyou ha ii tenki", u"昨日は雨だった"},
                  [&](RequestId id, ConversionResult r) { gotId = id; got = r; });
     CHECK(conv.calls == 1);
     CHECK(gotId == 42);
     CHECK(got.ok);
     CHECK(got.text == std::u16string(u"kyou ha ii tenki。"));
+    CHECK(conv.lastContext == std::u16string(u"昨日は雨だった"));  // 継続モードの文脈伝搬
 }
 
 TEST_CASE("3-D: 容量1（既定）は2件目を弾く") {
@@ -137,7 +141,8 @@ TEST_CASE("3-A+3-D: enqueue→変換→Done→投入順確定（3-E フローの
     REQUIRE(q.TryEnqueue(req));
 
     // 変換器を呼んで結果でキューを更新（同期）
-    conv.Convert(req.id, req.source, [&](RequestId id, ConversionResult r) {
+    conv.Convert(req.id, ConversionInput{req.source, u""},
+                 [&](RequestId id, ConversionResult r) {
         if (r.ok) q.MarkDone(id, r.text);
         else      q.MarkFailed(id);
     });

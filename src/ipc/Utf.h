@@ -40,4 +40,13 @@ inline std::string Trim(const std::string& s) {
     return s.substr(b, e - b + 1);
 }
 
+// 改行を空白に潰して 1 行にする。プロンプトへ埋め込む値（文脈・入力）が
+// 「入力:」「出力:」等のテンプレート構造を行頭から壊さないための最小防御。
+inline std::string OneLine(std::string s) {
+    for (char& c : s) {
+        if (c == '\n' || c == '\r') c = ' ';
+    }
+    return s;
+}
+
 }  // namespace yoshinani::ipc

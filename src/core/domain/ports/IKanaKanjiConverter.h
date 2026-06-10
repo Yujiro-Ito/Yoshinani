@@ -19,16 +19,24 @@ struct ConversionResult {
     bool ok = false;
 };
 
-// 変換ポート。input（B方式では空白区切りローマ字）を渡し、結果を callback で受ける。
+// 変換依頼の入力（継続モード対応・2026-06-10）。
+//   context は「直前に確定した文」（空可）。LazyJP の文脈チェイン相当で、
+//   実装はこれをプロンプトの文脈節に入れて変換精度を上げる（出力には含めない）。
+struct ConversionInput {
+    std::u16string source;   // 変換対象（B方式では romaji。空白あり/なし両対応）
+    std::u16string context;  // 直前の確定文（参考情報。空なら文脈なし）
+};
+
+// 変換ポート。結果を callback で受ける。
 class IKanaKanjiConverter {
 public:
     virtual ~IKanaKanjiConverter() = default;
 
     // 変換依頼。結果は onDone(id, result) で返す。
     //   v1 実装は内部で同期往復して即 onDone を呼んでよい（§6.5 ①）。
-    //   将来 async 化（4-A）では「待たずに後で onDone」に変えるだけで core 側は不変。
+    //   4-A では呼び出し側（ConvertMarshaller）がワーカースレッドで実行する。
     virtual void Convert(RequestId id,
-                         std::u16string_view input,
+                         const ConversionInput& input,
                          std::function<void(RequestId, ConversionResult)> onDone) = 0;
 };
 

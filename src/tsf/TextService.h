@@ -7,6 +7,7 @@
 #pragma once
 #include "Globals.h"
 #include "ConvertMarshaller.h"
+#include "application/ContextHistory.h"
 #include "application/ConversionQueue.h"
 #include "application/InputSession.h"
 #include "application/Settings.h"
@@ -96,6 +97,7 @@ private:
 
     yoshinani::core::application::InputSession    m_session;  // 打鍵中セグメント
     yoshinani::core::application::ConversionQueue m_queue;    // 変換待ちセグメント列（4-A）
+    yoshinani::core::application::ContextHistory  m_history;  // 直前の確定文（継続モード）
     std::set<WPARAM> m_triggerVKs;   // 確定トリガー（設定由来。既定 = Tab）
 
     // 変換器（3-A ポート）。shared なのはワーカースレッドと生存を共有するため（4-A）。

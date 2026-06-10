@@ -90,7 +90,7 @@ void ConvertMarshaller::Stop() {
 
 void ConvertMarshaller::Dispatch(
         std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter> converter,
-        RequestId id, std::u16string input) {
+        RequestId id, yoshinani::core::domain::ConversionInput input) {
     if (!state_ || !converter) return;
     std::shared_ptr<State> state = state_;  // ワーカーと共有（Stop 後も安全に書ける）
 

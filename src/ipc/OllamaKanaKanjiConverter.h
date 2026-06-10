@@ -15,7 +15,7 @@ public:
 
     // 同期実装（v1）。HTTP 往復してから onDone を呼ぶ（§6.5 ①「形だけ非同期」）。
     void Convert(yoshinani::core::domain::RequestId id,
-                 std::u16string_view input,
+                 const yoshinani::core::domain::ConversionInput& input,
                  std::function<void(yoshinani::core::domain::RequestId,
                                     yoshinani::core::domain::ConversionResult)> onDone) override;
 

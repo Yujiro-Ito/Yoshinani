@@ -424,6 +424,7 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
         // 状態はラムダ実行時点で評価する（キャプチャ時点とずれないように）。
         if (AllEmpty()) {
             // 全確定: composition 全体を確定文字列で置換して終了。
+            m_history.Push(committed);  // 継続モード: 確定文を次の変換の文脈に
             CommitText(ec, m_pContext, committed);
             return S_OK;
         }
@@ -465,9 +466,11 @@ void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
         if (!shrunk) {
             m_queue.Clear();
             m_session.Clear();
+            m_history.Push(full);  // フォールバック全確定も文脈に（継続モード）
             CommitText(ec, m_pContext, full);
             return S_OK;
         }
+        m_history.Push(committed);  // 部分確定した分も文脈に（継続モード）
 
         // 縮めた composition に属性を再適用 + キャレット末尾。
         ITfRange* pCompRange = nullptr;
@@ -553,7 +556,8 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
             m_queue.TryEnqueue(ConversionRequest{id, source, ConvState::Pending, {}});
             m_session.Clear();
             RetainContext(pic);
-            m_marshaller.Dispatch(m_converter, id, source);  // ワーカーで変換（待たない）
+            // ワーカーで変換（待たない）。直前の確定文を文脈として渡す（継続モード）。
+            m_marshaller.Dispatch(m_converter, id, {source, m_history.Tail()});
             RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
                 return UpdateText(ec, pic);  // テキスト不変・属性が 入力中→変換中 に変わる
             });
@@ -567,6 +571,7 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
             m_queue.Clear();
             m_session.Clear();
             RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
+                m_history.Push(toCommit);  // 生確定も文脈になる（継続モード）。確定と同時に積む
                 CommitText(ec, pic, toCommit);
                 return S_OK;
             });

@@ -39,7 +39,8 @@ public:
     //   実行中でありうるため（共有保持で use-after-free を防ぐ）。
     //   Convert 実装はステートレス（呼び出しごとに独立した接続）なので並行呼び出し可。
     void Dispatch(std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter> converter,
-                  yoshinani::core::domain::RequestId id, std::u16string input);
+                  yoshinani::core::domain::RequestId id,
+                  yoshinani::core::domain::ConversionInput input);
 
     // 共有状態（結果バッファ + ウィンドウハンドル）。実体は .cpp（WndProc から触るため public 宣言）。
     struct State;

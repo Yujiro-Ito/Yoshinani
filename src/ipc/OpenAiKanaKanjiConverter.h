@@ -18,7 +18,7 @@ public:
     // 同期実装（v1）。HTTPS 往復してから onDone を呼ぶ（§6.5 ①「形だけ非同期」）。
     // キー不在・通信失敗は ok=false（呼び出し側が生入力フォールバック／3-E）。
     void Convert(yoshinani::core::domain::RequestId id,
-                 std::u16string_view input,
+                 const yoshinani::core::domain::ConversionInput& input,
                  std::function<void(yoshinani::core::domain::RequestId,
                                     yoshinani::core::domain::ConversionResult)> onDone) override;
 
