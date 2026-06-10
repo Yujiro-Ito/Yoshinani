@@ -66,19 +66,23 @@ void OpenAiKanaKanjiConverter::Convert(
     const std::string in  = OneLine(U16ToU8(input.source));
     const std::string ctx = OneLine(U16ToU8(input.context));
 
-    // A/B 実測（HANDOFF §4）で空白なし入力も解けたプロンプト（分かち書き推測の指示入り）。
-    // 継続モード: 直前の確定文を文脈節として渡す（同音異義・専門語の精度向上）。
+    // 指示部は英語（実測で約22%のトークン削減・精度は日本語指示と実質同等・2026-06-10）。
+    // 例文と入力/出力は日本語のまま。空白なし推測・誤字修正・記号の日本語化・%...% 特別指示に対応。
+    // 継続モード: 直前の確定文を文脈ヒントとして渡す（同音異義・専門語の精度向上）。
     std::string prompt =
-        "次の「ローマ字」を自然な日本語（漢字かな交じり）に変換してください。\n"
-        "入力に空白がない場合は単語の区切り（分かち書き）を推測すること。\n"
-        "ルール: 入力を漏れなく忠実に変換し、言い換え・要約・補足説明をしない。"
-        "英語/専門用語/固有名詞は Latin 文字のまま残す。出力は変換後の日本語のみ。引用符や説明を付けない。\n\n"
-        "例:\n入力: kyou ha openai de class wo tukutta\n出力: 今日はOpenAIでclassを作った\n"
-        "入力: kyouhatenkigaii\n出力: 今日は天気がいい\n\n";
+        "Convert romaji to natural Japanese (kanji-kana). If there are no spaces, infer word boundaries.\n"
+        "Translate faithfully; do not paraphrase or summarize. Only fix clear typos that would otherwise break the Japanese.\n"
+        "Convert symbols ([] \"\" - ? ! etc.) to Japanese ones (「」『』ー、。！？) when they fit the context.\n"
+        "Keep English, technical terms, and proper nouns in Latin script. Output only the converted text.\n"
+        "Text wrapped in %...% is a one-time instruction for this conversion: obey it and do not output the instruction itself (e.g. %polite form% %translate to English%).\n\n"
+        "kyou ha openai de class wo tukutta → 今日はOpenAIでclassを作った\n"
+        "kyouhatenkigaii → 今日は天気がいい\n"
+        "\"sushi\" wo tabeta! → 「sushi」を食べた！\n"
+        "%teineigo nisite% asita iku → 明日行きます\n\n";
     if (!ctx.empty()) {
-        prompt += "直前の文脈（語彙・話題の参考。出力には含めない）: " + ctx + "\n\n";
+        prompt += "Context (hint only, do not output): " + ctx + "\n\n";
     }
-    prompt += "入力: " + in + "\n出力:";
+    prompt += in + " →";
 
     nlohmann::json req;
     req["model"]            = model_;
