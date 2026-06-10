@@ -22,6 +22,7 @@ add_executable(yoshinani.core.tests
   test_settings.cpp
   test_conversion_queue.cpp
   test_context_history.cpp
+  test_input_mode.cpp
 )
 target_link_libraries(yoshinani.core.tests PRIVATE yoshinani.core doctest_header)
 

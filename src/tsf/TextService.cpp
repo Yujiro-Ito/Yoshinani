@@ -79,6 +79,8 @@ STDMETHODIMP CTextService::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<ITfCompositionSink*>(this);
     } else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider)) {
         *ppv = static_cast<ITfDisplayAttributeProvider*>(this);
+    } else if (IsEqualIID(riid, IID_ITfCompartmentEventSink)) {
+        *ppv = static_cast<ITfCompartmentEventSink*>(this);
     } else {
         *ppv = nullptr;
         return E_NOINTERFACE;
@@ -143,6 +145,23 @@ std::set<WPARAM> CTextService::LoadTriggerVKs(
     return vks;
 }
 
+// モード切替キー（1-D）。半角/全角はアプリ/状況により VK_KANJI(0x19) /
+// VK_OEM_AUTO(0xF3) / VK_OEM_ENLW(0xF4) のいずれで届くか揺れるため、
+// "Kanji" 指定時は 3 つともエイリアスとして登録する。
+std::set<WPARAM> CTextService::LoadModeToggleVKs(
+        const yoshinani::core::application::Settings& settings) const {
+    std::set<WPARAM> vks;
+    for (const std::string& name : settings.modeToggleKeys) {
+        if (auto vk = KeyNameToVk(name)) vks.insert(*vk);
+    }
+    if (vks.empty()) vks.insert(static_cast<WPARAM>(VK_KANJI));  // 安全側（既定 = 半角/全角）
+    if (vks.count(static_cast<WPARAM>(VK_KANJI)) != 0) {
+        vks.insert(static_cast<WPARAM>(VK_OEM_AUTO));
+        vks.insert(static_cast<WPARAM>(VK_OEM_ENLW));
+    }
+    return vks;
+}
+
 // 変換バックエンドの生成。model 空文字は「バックエンド既定」（Settings.h）。
 // A/B 実測（2026-06-10）より既定はクラウド openai gpt-5.4-mini + low
 // （空白なしローマ字を実質解決。ローカル派は settings.json で "ollama" に切替）。
@@ -167,8 +186,12 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     if (m_pThreadMgr) m_pThreadMgr->AddRef();
     m_tfClientId = tid;
     const auto settings = LoadSettings();
-    m_triggerVKs = LoadTriggerVKs(settings);
-    m_converter  = CreateConverter(settings.converter);
+    m_triggerVKs    = LoadTriggerVKs(settings);
+    m_modeToggleVKs = LoadModeToggleVKs(settings);
+    m_converter     = CreateConverter(settings.converter);
+
+    // 1-D: open/close コンパートメントを初期化（open=変換が既定）し、変更を購読する。
+    InitOpenCloseCompartment();
 
     // 4-A: ワーカー→TIP スレッドのマーシャラ（結果は OnConvertResult に届く）。
     m_marshaller.Start([this](RequestId id, ConversionResult r) {
@@ -196,6 +219,7 @@ STDMETHODIMP CTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 }
 
 STDMETHODIMP CTextService::Deactivate() {
+    UninitOpenCloseCompartment();
     UninitKeyEventSink();
     m_marshaller.Stop();  // 以後ワーカーの結果は捨てられる（OnConvertResult は来ない）
     if (m_pComposition) {
@@ -250,16 +274,102 @@ void CTextService::ReleaseContext() {
     }
 }
 
+// ---- 1-D: open/close コンパートメント同期 -------------------------------------
+
+void CTextService::InitOpenCloseCompartment() {
+    if (!m_pThreadMgr) return;
+    ITfCompartmentMgr* pMgr = nullptr;
+    if (FAILED(m_pThreadMgr->QueryInterface(IID_ITfCompartmentMgr,
+                                            reinterpret_cast<void**>(&pMgr)))) {
+        return;
+    }
+    if (SUCCEEDED(pMgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_OPENCLOSE, &m_pOpenClose)) &&
+        m_pOpenClose) {
+        // activate 時は常に変換モード（open）で開始する — 1-D 確定事項。
+        // open/close はキーボードスレッド共有のため、直前の別 IME が残した close 値を
+        // 引き継ぐと「よしなにを選んだのに全キー素通し＝動かない」に見える。
+        // IME を選んだ＝変換意思とみなし、自分が activate されたら変換で開始する。
+        m_mode.Set(yoshinani::core::application::InputMode::Conversion);
+        SetOpenCloseCompartment(true);
+        // 言語バー/アプリ側からの open/close 変更にも追従する（モード状態の真実の源）。
+        ITfSource* pSource = nullptr;
+        if (SUCCEEDED(m_pOpenClose->QueryInterface(IID_ITfSource,
+                                                   reinterpret_cast<void**>(&pSource)))) {
+            pSource->AdviseSink(IID_ITfCompartmentEventSink,
+                                static_cast<ITfCompartmentEventSink*>(this), &m_openCloseCookie);
+            pSource->Release();
+        }
+    }
+    pMgr->Release();
+}
+
+void CTextService::UninitOpenCloseCompartment() {
+    if (m_pOpenClose) {
+        if (m_openCloseCookie != TF_INVALID_COOKIE) {
+            ITfSource* pSource = nullptr;
+            if (SUCCEEDED(m_pOpenClose->QueryInterface(IID_ITfSource,
+                                                       reinterpret_cast<void**>(&pSource)))) {
+                pSource->UnadviseSink(m_openCloseCookie);
+                pSource->Release();
+            }
+            m_openCloseCookie = TF_INVALID_COOKIE;
+        }
+        m_pOpenClose->Release();
+        m_pOpenClose = nullptr;
+    }
+}
+
+void CTextService::SetOpenCloseCompartment(bool open) {
+    if (!m_pOpenClose) return;
+    VARIANT var;
+    var.vt   = VT_I4;
+    var.lVal = open ? 1 : 0;
+    m_pOpenClose->SetValue(m_tfClientId, &var);
+}
+
+// open/close の変更（自分の SetValue / 言語バー / アプリ）→ core のモード状態へ反映。
+STDMETHODIMP CTextService::OnChange(REFGUID rguid) {
+    using yoshinani::core::application::InputMode;
+    if (!IsEqualGUID(rguid, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE) || !m_pOpenClose) return S_OK;
+    VARIANT var;
+    VariantInit(&var);
+    if (SUCCEEDED(m_pOpenClose->GetValue(&var)) && var.vt == VT_I4) {
+        const bool open = (var.lVal != 0);
+        // 直接入力へ切り替わる瞬間に未確定が残っていたら生確定して保護する。
+        // sink コールバック中なので edit session は非同期（fromSink=true）。
+        if (!open && !AllEmpty() && m_pContext) FlushAsRaw(m_pContext, /*fromSink=*/true);
+        m_mode.Set(open ? InputMode::Conversion : InputMode::Direct);
+    }
+    VariantClear(&var);
+    return S_OK;
+}
+
+// 未確定区間（変換待ち+打鍵中）を生のまま全確定する（Enter 生確定・モード切替の共通経路）。
+// sink コールバック発（fromSink）は同期 edit session が再入/失敗しうるため非同期で要求する。
+void CTextService::FlushAsRaw(ITfContext* pic, bool fromSink) {
+    if (AllEmpty()) return;
+    const std::u16string toCommit = BuildPreeditView(m_queue, m_session.Preedit()).text;
+    m_queue.Clear();
+    m_session.Clear();
+    const DWORD flags = (fromSink ? TF_ES_ASYNC : TF_ES_SYNC) | TF_ES_READWRITE;
+    RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
+        m_history.Push(toCommit);  // 生確定も文脈になる（継続モード）。確定と同時に積む
+        CommitText(ec, pic, toCommit);
+        return S_OK;
+    }, flags);
+    ReleaseContext();
+}
+
 // ---- edit session ------------------------------------------------------------
 
-HRESULT CTextService::RequestEditSession(ITfContext* pic, std::function<HRESULT(TfEditCookie)> fn) {
+HRESULT CTextService::RequestEditSession(ITfContext* pic, std::function<HRESULT(TfEditCookie)> fn,
+                                         DWORD flags) {
     if (!pic) return E_FAIL;
     CEditSession* es = new (std::nothrow) CEditSession(std::move(fn));
     if (!es) return E_OUTOFMEMORY;
 
     HRESULT hrSession = E_FAIL;
-    HRESULT hr = pic->RequestEditSession(m_tfClientId, es,
-                                         TF_ES_SYNC | TF_ES_READWRITE, &hrSession);
+    HRESULT hr = pic->RequestEditSession(m_tfClientId, es, flags, &hrSession);
     es->Release();
     return SUCCEEDED(hr) ? hrSession : hr;
 }
@@ -507,6 +617,15 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/) {
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM lParam,
                                          BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
+    // 1-D: モード切替キーは常に消費。直接入力モードは切替キー以外すべて素通し。
+    if (m_modeToggleVKs.count(wParam) != 0) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+    if (m_mode.IsDirect()) {
+        *pfEaten = FALSE;
+        return S_OK;
+    }
     wchar_t ch = 0;
     KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, AllEmpty());
@@ -517,6 +636,20 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam,
                                      BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
+    // 1-D: モード切替（変換⇄直接）。未確定が残っていたら生確定してから切り替える。
+    if (m_modeToggleVKs.count(wParam) != 0) {
+        *pfEaten = TRUE;
+        if (!AllEmpty()) FlushAsRaw(pic);
+        // 順序固定: Toggle() を先に行うこと。SetOpenCloseCompartment は OnChange を
+        // 同期発火させうるため、逆順にすると OnChange の Set 後に Toggle が走り二重反転する。
+        m_mode.Toggle();
+        SetOpenCloseCompartment(!m_mode.IsDirect());  // open = 変換（言語バー表示も同期）
+        return S_OK;
+    }
+    if (m_mode.IsDirect()) {
+        *pfEaten = FALSE;
+        return S_OK;
+    }
     wchar_t ch = 0;
     KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, AllEmpty());
@@ -564,20 +697,11 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
             break;
         }
 
-        case InputAction::CommitRaw: {
+        case InputAction::CommitRaw:
             // Enter: 見えているもの（変換待ちソース + 打鍵中）を丸ごと生確定（変換しない）。
-            // 変換待ちは破棄＝飛行中の結果は到着時に無視される（4-A）。
-            const std::u16string toCommit = BuildPreeditView(m_queue, m_session.Preedit()).text;
-            m_queue.Clear();
-            m_session.Clear();
-            RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
-                m_history.Push(toCommit);  // 生確定も文脈になる（継続モード）。確定と同時に積む
-                CommitText(ec, pic, toCommit);
-                return S_OK;
-            });
-            ReleaseContext();
+            // 変換待ちは破棄＝飛行中の結果は到着時に無視される（4-A）。経路はモード切替と共通。
+            FlushAsRaw(pic);
             break;
-        }
 
         case InputAction::Cancel:
             // Esc: 未確定区間（変換待ち含む）を丸ごと取消（4-A の全取消）。

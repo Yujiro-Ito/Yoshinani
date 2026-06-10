@@ -9,6 +9,7 @@
 #include "ConvertMarshaller.h"
 #include "application/ContextHistory.h"
 #include "application/ConversionQueue.h"
+#include "application/InputMode.h"
 #include "application/InputSession.h"
 #include "application/Settings.h"
 #include "domain/ports/IKanaKanjiConverter.h"
@@ -19,7 +20,8 @@
 class CTextService final : public ITfTextInputProcessorEx,
                            public ITfKeyEventSink,
                            public ITfCompositionSink,
-                           public ITfDisplayAttributeProvider {
+                           public ITfDisplayAttributeProvider,
+                           public ITfCompartmentEventSink {
 public:
     CTextService();
 
@@ -48,6 +50,9 @@ public:
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) override;
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** ppInfo) override;
 
+    // ITfCompartmentEventSink（1-D: open/close コンパートメントとモード同期）
+    STDMETHODIMP OnChange(REFGUID rguid) override;
+
 private:
     ~CTextService();
 
@@ -55,8 +60,10 @@ private:
     BOOL InitKeyEventSink();
     void UninitKeyEventSink();
 
-    // edit session（同期・読み書き）を1回実行
-    HRESULT RequestEditSession(ITfContext* pic, std::function<HRESULT(TfEditCookie)> fn);
+    // edit session（読み書き）を1回実行。既定は同期。
+    // sink コールバック（OnChange 等）から呼ぶ場合は再入を避けるため TF_ES_ASYNC を渡す。
+    HRESULT RequestEditSession(ITfContext* pic, std::function<HRESULT(TfEditCookie)> fn,
+                               DWORD flags = TF_ES_SYNC | TF_ES_READWRITE);
 
     // composition 操作（edit session 内から呼ぶ）
     HRESULT StartComposition(TfEditCookie ec, ITfContext* pic);
@@ -81,6 +88,16 @@ private:
     void RetainContext(ITfContext* pic);
     void ReleaseContext();
 
+    // 1-D: open/close コンパートメント（モード状態の真実の源）の初期化・同期。
+    void InitOpenCloseCompartment();
+    void UninitOpenCloseCompartment();
+    void SetOpenCloseCompartment(bool open);   // open=変換 / close=直接
+    // 1-D: 未確定区間（変換待ち+打鍵中）を生のまま全確定する（モード切替時のデータ保護）。
+    // fromSink=true は sink コールバック発（edit session を非同期で要求）。
+    void FlushAsRaw(ITfContext* pic, bool fromSink = false);
+    // 設定からモード切替キーの VK 集合を構築（半角/全角の VK 揺れをエイリアス展開）。
+    std::set<WPARAM> LoadModeToggleVKs(const yoshinani::core::application::Settings& settings) const;
+
     // settings.json（DLL と同じディレクトリ）を読む。無い/不正なら既定値。
     yoshinani::core::application::Settings LoadSettings() const;
     // 設定から確定トリガーの VK 集合を構築する。
@@ -98,7 +115,13 @@ private:
     yoshinani::core::application::InputSession    m_session;  // 打鍵中セグメント
     yoshinani::core::application::ConversionQueue m_queue;    // 変換待ちセグメント列（4-A）
     yoshinani::core::application::ContextHistory  m_history;  // 直前の確定文（継続モード）
-    std::set<WPARAM> m_triggerVKs;   // 確定トリガー（設定由来。既定 = Tab）
+    yoshinani::core::application::InputModeState  m_mode;     // 変換⇄直接（1-D）
+    std::set<WPARAM> m_triggerVKs;     // 確定トリガー（設定由来。既定 = Tab）
+    std::set<WPARAM> m_modeToggleVKs;  // モード切替キー（設定由来。既定 = 半角/全角）
+
+    // 1-D: open/close コンパートメント（AddRef 保持・sink の advise cookie）
+    ITfCompartment* m_pOpenClose = nullptr;
+    DWORD           m_openCloseCookie = TF_INVALID_COOKIE;
 
     // 変換器（3-A ポート）。shared なのはワーカースレッドと生存を共有するため（4-A）。
     std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter> m_converter;

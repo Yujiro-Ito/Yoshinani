@@ -30,6 +30,20 @@ TEST_CASE("triggerKeys が空配列なら既定を維持") {
     CHECK(s.triggerKeys[0] == "Tab");
 }
 
+TEST_CASE("modeToggleKeys: 既定は Kanji（半角/全角）・JSON から上書き可・空配列は既定維持") {
+    auto d = ParseSettings("");
+    REQUIRE(d.modeToggleKeys.size() == 1);
+    CHECK(d.modeToggleKeys[0] == "Kanji");
+
+    auto s = ParseSettings(R"({"modeToggleKeys":["Tab"]})");
+    REQUIRE(s.modeToggleKeys.size() == 1);
+    CHECK(s.modeToggleKeys[0] == "Tab");
+
+    auto e = ParseSettings(R"({"modeToggleKeys":[]})");
+    REQUIRE(e.modeToggleKeys.size() == 1);
+    CHECK(e.modeToggleKeys[0] == "Kanji");
+}
+
 TEST_CASE("converter の既定は openai / model 空(バックエンド既定) / low") {
     auto s = ParseSettings("");
     CHECK(s.converter.backend == "openai");

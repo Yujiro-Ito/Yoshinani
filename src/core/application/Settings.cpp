@@ -16,6 +16,13 @@ Settings ParseSettings(const std::string& jsonText) {
             }
             if (!keys.empty()) s.triggerKeys = std::move(keys);
         }
+        if (j.contains("modeToggleKeys") && j.at("modeToggleKeys").is_array()) {
+            std::vector<std::string> keys;
+            for (const auto& e : j.at("modeToggleKeys")) {
+                if (e.is_string()) keys.push_back(e.get<std::string>());
+            }
+            if (!keys.empty()) s.modeToggleKeys = std::move(keys);
+        }
         if (j.contains("converter") && j.at("converter").is_object()) {
             const auto& c = j.at("converter");
             // 空文字は「指定なし」とみなし既定を保つ（タスクトレイ UI が部分的に書く場合に安全）。

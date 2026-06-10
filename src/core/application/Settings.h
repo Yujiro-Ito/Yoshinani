@@ -21,6 +21,8 @@ struct Settings {
     // 例: "Tab" / "Period"(。) / "Comma"(、)
     // 既定は Tab。Space（分かち書きの区切り）と Enter（生確定専用）はトリガーにできない。
     std::vector<std::string> triggerKeys{ "Tab" };
+    // 入力モード切替（変換⇄直接・1-D）のキー名。既定は半角/全角キー。
+    std::vector<std::string> modeToggleKeys{ "Kanji" };
     ConverterSettings converter{};
 };
 

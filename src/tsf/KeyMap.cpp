@@ -7,6 +7,7 @@ std::optional<WPARAM> KeyNameToVk(const std::string& name) {
     if (name == "Comma")  return static_cast<WPARAM>(VK_OEM_COMMA);   // 、
     if (name == "Tab")    return static_cast<WPARAM>(VK_TAB);
     if (name == "Enter")  return static_cast<WPARAM>(VK_RETURN);
+    if (name == "Kanji")  return static_cast<WPARAM>(VK_KANJI);  // 半角/全角（1-D モード切替）
     return std::nullopt;
 }
 
