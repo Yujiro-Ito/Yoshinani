@@ -18,6 +18,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -134,6 +135,28 @@ std::string JoinCSV(const std::vector<std::string>& v) {
     return out;
 }
 
+// ---- Keymap キーキャプチャ用 --------------------------------------------------
+
+// VK → 設定で使うキー名（"Tab" / "Kanji" / ...）。tsf 側 VkToKeyName を共有しない
+// （トレイ EXE は yoshinani.dll に依存しない設計）ため、ここでミラーを持つ。
+// 対応表を変えるときは src/tsf/KeyMap.cpp の VkToKeyName / KeyNameToVk と同期させる。
+std::optional<std::string> VkToTrayName(WPARAM vk) {
+    switch (vk) {
+        case VK_TAB:         return std::string("Tab");
+        case VK_SPACE:       return std::string("Space");
+        case VK_OEM_PERIOD:  return std::string("Period");
+        case VK_OEM_COMMA:   return std::string("Comma");
+        case VK_RETURN:      return std::string("Enter");
+        case VK_KANJI:
+        case VK_OEM_AUTO:
+        case VK_OEM_ENLW:    return std::string("Kanji");
+        case VK_NONCONVERT:  return std::string("NonConvert");
+        case VK_CONVERT:     return std::string("Convert");
+        case VK_CAPITAL:     return std::string("Capital");
+        default:             return std::nullopt;
+    }
+}
+
 // ---- モデル候補 --------------------------------------------------------------
 
 struct ModelChoice {
@@ -175,9 +198,15 @@ constexpr int ID_OK      = 101;
 constexpr int ID_CANCEL  = 102;
 constexpr int ID_APPLY   = 103;
 
-// Keymap タブ
-constexpr int ID_KM_TRIGGER = 200;
-constexpr int ID_KM_MODE    = 201;
+// Keymap タブ — 4 項目 × [EDIT + 記録ボタン + クリアボタン]
+//   ID_KM_BASE + i*3 + 0/1/2 = edit / btnRecord / btnClear（i=0..3）
+constexpr int ID_KM_BASE    = 200;
+constexpr int ID_KM_PER_ROW = 3;
+constexpr int KM_ROW_COUNT  = 4;
+constexpr int KM_TRIGGER    = 0;  // 確定トリガー（triggerKeys）
+constexpr int KM_TOGGLE     = 1;  // モード切替トグル（modeToggleKeys）
+constexpr int KM_CONV_ON    = 2;  // 直接→変換 へ（conversionOnKeys）
+constexpr int KM_DIRECT_ON  = 3;  // 変換→直接 へ（directOnKeys）
 
 // General タブ
 constexpr int ID_GN_PATH        = 300;
@@ -208,12 +237,13 @@ struct State {
     HWND hCancel = nullptr;
     HWND hApply  = nullptr;
 
-    // Keymap
-    HWND hKmTriggerLbl = nullptr;
-    HWND hKmTrigger    = nullptr;
-    HWND hKmModeLbl    = nullptr;
-    HWND hKmMode       = nullptr;
-    HWND hKmHelp       = nullptr;
+    // Keymap — 4 行構成（ラベル + EDIT + 記録 + クリア）
+    HWND hKmLabel[KM_ROW_COUNT]  = {};
+    HWND hKmEdit [KM_ROW_COUNT]  = {};
+    HWND hKmRec  [KM_ROW_COUNT]  = {};
+    HWND hKmClr  [KM_ROW_COUNT]  = {};
+    HWND hKmHelp = nullptr;
+    bool kmRecording[KM_ROW_COUNT] = {};  // 記録モードフラグ（true 中は次の KeyDown を吸い込む）
 
     // General
     HWND hGnPathLbl    = nullptr;
@@ -274,19 +304,76 @@ void ShowMany(HWND* arr, size_t n, bool show) {
     for (size_t i = 0; i < n; ++i) ShowWindow(arr[i], show ? SW_SHOW : SW_HIDE);
 }
 
+// 前方宣言（KmEditProc から後段のヘルパを呼ぶ）。
+std::vector<std::string>* KmTargetVec(int row);
+void                      RefreshKmRow(int row);
+
+// ---- Keymap EDIT サブクラス: 記録中の WM_KEYDOWN を捕まえる ------------------
+
+// 各行の「記録」ボタン押下中、EDIT にフォーカスを当てて次の KeyDown を捕獲する。
+// uIdSubclass は行インデックス (0..KM_ROW_COUNT-1)。
+LRESULT CALLBACK KmEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam,
+                            UINT_PTR uIdSubclass, DWORD_PTR /*dwRefData*/) {
+    if (!g_state) return DefSubclassProc(hWnd, msg, wParam, lParam);
+    const int row = static_cast<int>(uIdSubclass);
+    if (row < 0 || row >= KM_ROW_COUNT) return DefSubclassProc(hWnd, msg, wParam, lParam);
+
+    if (g_state->kmRecording[row]) {
+        // ダイアログ系のキー（Tab/Enter/方向キー）も全部こちらに取り込む。
+        if (msg == WM_GETDLGCODE) return DLGC_WANTALLKEYS;
+
+        if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+            // Esc は記録キャンセル（割当てない）。
+            if (wParam == VK_ESCAPE) {
+                g_state->kmRecording[row] = false;
+                SetText(g_state->hKmRec[row], L"記録");
+                RefreshKmRow(row);
+                SetFocus(g_state->hKmRec[row]);
+                return 0;
+            }
+            auto name = VkToTrayName(wParam);
+            if (name) {
+                auto* v = KmTargetVec(row);
+                if (v) {
+                    v->clear();           // 最小実装は単一キーのみ（複数キー対応は将来）
+                    v->push_back(*name);
+                    SetText(hWnd, *name);
+                }
+            }
+            g_state->kmRecording[row] = false;
+            SetText(g_state->hKmRec[row], L"記録");
+            SetFocus(g_state->hKmRec[row]);
+            return 0;
+        }
+
+        if (msg == WM_KILLFOCUS) {
+            // フォーカスが外れたら記録を中断（誤ってクリックしたまま外れる事故対策）。
+            g_state->kmRecording[row] = false;
+            SetText(g_state->hKmRec[row], L"記録");
+        }
+    }
+    return DefSubclassProc(hWnd, msg, wParam, lParam);
+}
+
 // ---- タブ切替 ----------------------------------------------------------------
 
 void ShowTab(int idx) {
-    HWND keymap[] = { g_state->hKmTriggerLbl, g_state->hKmTrigger,
-                      g_state->hKmModeLbl,    g_state->hKmMode, g_state->hKmHelp };
     HWND general[] = { g_state->hGnPathLbl, g_state->hGnPath,
                        g_state->hGnOpenJson, g_state->hGnOpenFolder, g_state->hGnHelp };
     HWND model[] = { g_state->hMdBackendLbl, g_state->hMdBackendO, g_state->hMdBackendL,
                      g_state->hMdModelLbl,   g_state->hMdModel,
                      g_state->hMdEffortLbl,  g_state->hMdEffort, g_state->hMdHelp };
-    ShowMany(keymap, ARRAYSIZE(keymap), idx == TAB_KEYMAP);
     ShowMany(general, ARRAYSIZE(general), idx == TAB_GENERAL);
     ShowMany(model, ARRAYSIZE(model), idx == TAB_MODEL);
+
+    const bool kmOn = (idx == TAB_KEYMAP);
+    for (int i = 0; i < KM_ROW_COUNT; ++i) {
+        ShowWindow(g_state->hKmLabel[i], kmOn ? SW_SHOW : SW_HIDE);
+        ShowWindow(g_state->hKmEdit [i], kmOn ? SW_SHOW : SW_HIDE);
+        ShowWindow(g_state->hKmRec  [i], kmOn ? SW_SHOW : SW_HIDE);
+        ShowWindow(g_state->hKmClr  [i], kmOn ? SW_SHOW : SW_HIDE);
+    }
+    ShowWindow(g_state->hKmHelp, kmOn ? SW_SHOW : SW_HIDE);
 }
 
 // ---- Model タブ: バックエンド連動 --------------------------------------------
@@ -310,15 +397,31 @@ void ApplyBackendToUI() {
     ComboFill(g_state->hMdEffort, kEfforts, g_state->working.converter.reasoningEffort);
 }
 
+// ---- Keymap: 行と Settings フィールドの対応 ----------------------------------
+
+std::vector<std::string>* KmTargetVec(int row) {
+    auto& s = g_state->working;
+    switch (row) {
+        case KM_TRIGGER:   return &s.triggerKeys;
+        case KM_TOGGLE:    return &s.modeToggleKeys;
+        case KM_CONV_ON:   return &s.conversionOnKeys;
+        case KM_DIRECT_ON: return &s.directOnKeys;
+        default:           return nullptr;
+    }
+}
+
+// 行の EDIT に working の先頭キー名を表示（空なら空文字＝未割当）。
+void RefreshKmRow(int row) {
+    auto* v = KmTargetVec(row);
+    if (!v) return;
+    SetText(g_state->hKmEdit[row], v->empty() ? std::string{} : v->front());
+}
+
 // ---- 書き戻し: フォーム → working ---------------------------------------------
 
 void HarvestForm() {
     auto& s = g_state->working;
-    s.triggerKeys    = SplitCSV(Narrow(GetTextW(g_state->hKmTrigger)));
-    s.modeToggleKeys = SplitCSV(Narrow(GetTextW(g_state->hKmMode)));
-    // NOTE: conversionOnKeys / directOnKeys は現状 UI に編集フィールドがないため
-    //       working の値をそのまま温存する（LoadIntoForm で JSON から読んだ値が残る）。
-    //       Keymap タブのキーキャプチャ UI 実装（#21）で個別フィールドを追加予定。
+    // Keymap タブ: working は記録/クリア操作で逐次更新済み。Apply 時の収集は不要。
 
     s.converter.backend =
         (SendMessageW(g_state->hMdBackendL, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "ollama"
@@ -332,14 +435,13 @@ void HarvestForm() {
 // ---- 読込: settings.json → working ・フォーム反映 ----------------------------
 
 void LoadIntoForm() {
-    EnsureSettingsDir();  // 表示エラー（19:09「場所が利用できません」）対策で先に作る。
+    EnsureSettingsDir();  // 表示エラー（「場所が利用できません」）対策で先に作る。
     const auto path = SettingsPath();
     const auto text = path.empty() ? std::string{} : ReadAllText(path);
     g_state->working = text.empty() ? Settings{} : ParseSettings(text);
 
-    SetText(g_state->hKmTrigger, JoinCSV(g_state->working.triggerKeys));
-    SetText(g_state->hKmMode,    JoinCSV(g_state->working.modeToggleKeys));
-    SetText(g_state->hGnPath,    path);
+    for (int i = 0; i < KM_ROW_COUNT; ++i) RefreshKmRow(i);
+    SetText(g_state->hGnPath, path);
     ApplyBackendToUI();
 }
 
@@ -447,14 +549,55 @@ void CreateChildren(HWND hWnd) {
         return h;
     };
 
-    // ----- Keymap タブ -----
-    st->hKmTriggerLbl = mkLabel(Y0,        0, L"確定トリガーキー（カンマ区切り。既定: Tab）");
-    st->hKmTrigger    = mkEdit (Y0 + 20, ID_KM_TRIGGER);
-    st->hKmModeLbl    = mkLabel(Y0 + 56,    0, L"モード切替キー（変換⇄直接。既定: Kanji ＝半角/全角）");
-    st->hKmMode       = mkEdit (Y0 + 76, ID_KM_MODE);
-    st->hKmHelp       = mkHelp (Y0 + 116, 56,
-        L"使えるキー名: Tab / Period(。) / Comma(、) / Kanji(半角/全角)\n"
-        L"※ Space は分かち書き専用、Enter は生確定専用のためトリガーには使えません。");
+    // ----- Keymap タブ -----（4 行 × [ラベル / EDIT(キー名) / 記録ボタン / クリアボタン]）
+    const wchar_t* kmLabels[KM_ROW_COUNT] = {
+        L"確定トリガー:",
+        L"モード切替（トグル）:",
+        L"直接 → 変換 へ:",
+        L"変換 → 直接 へ:",
+    };
+    const int rowH    = 32;
+    const int xLabel  = X;
+    const int wLabel  = 150;
+    const int xEdit   = X + wLabel + 8;
+    const int wEdit   = 170;
+    const int xRec    = xEdit + wEdit + 8;
+    const int wRec    = 90;
+    const int xClr    = xRec + wRec + 6;
+    const int wClr    = 70;
+    for (int i = 0; i < KM_ROW_COUNT; ++i) {
+        const int y = Y0 + i * rowH;
+        HWND lbl = CreateWindowExW(0, L"STATIC", kmLabels[i], WS_CHILD | SS_LEFT,
+                                   xLabel, y + 5, wLabel, 18, hWnd, nullptr, hi, nullptr);
+        HWND edt = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_READONLY,
+                                   xEdit, y, wEdit, 24, hWnd,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                                       ID_KM_BASE + i * ID_KM_PER_ROW + 0)),
+                                   hi, nullptr);
+        HWND rec = CreateWindowExW(0, L"BUTTON", L"記録",
+                                   WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                                   xRec, y, wRec, 26, hWnd,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                                       ID_KM_BASE + i * ID_KM_PER_ROW + 1)),
+                                   hi, nullptr);
+        HWND clr = CreateWindowExW(0, L"BUTTON", L"クリア",
+                                   WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                                   xClr, y, wClr, 26, hWnd,
+                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(
+                                       ID_KM_BASE + i * ID_KM_PER_ROW + 2)),
+                                   hi, nullptr);
+        SendMessageW(lbl, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
+        SendMessageW(edt, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
+        SendMessageW(rec, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
+        SendMessageW(clr, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
+        SetWindowSubclass(edt, KmEditProc, static_cast<UINT_PTR>(i), 0);
+        st->hKmLabel[i] = lbl; st->hKmEdit[i] = edt; st->hKmRec[i] = rec; st->hKmClr[i] = clr;
+    }
+    st->hKmHelp = mkHelp(Y0 + KM_ROW_COUNT * rowH + 12, 64,
+        L"「記録」ボタンを押してから割当てたいキーを 1 つ押してください。\n"
+        L"認識キー: Tab / Period(。) / Comma(、) / Kanji(半角/全角) / NonConvert(無変換) / "
+        L"Convert(変換) / Capital(英数) ／ Esc で記録キャンセル。");
 
     // ----- General タブ -----
     st->hGnPathLbl    = mkLabel(Y0,        0, L"設定ファイル:");
@@ -511,6 +654,36 @@ LRESULT CALLBACK SettingsProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_COMMAND: {
             const WORD id  = LOWORD(wParam);
             const WORD code = HIWORD(wParam);
+
+            // Keymap タブの記録/クリアボタン（ID_KM_BASE 帯）。
+            if (id >= ID_KM_BASE && id < ID_KM_BASE + KM_ROW_COUNT * ID_KM_PER_ROW) {
+                const int offset = id - ID_KM_BASE;
+                const int row    = offset / ID_KM_PER_ROW;
+                const int kind   = offset % ID_KM_PER_ROW;  // 0=edit / 1=rec / 2=clr
+                if (kind == 1 && code == BN_CLICKED) {
+                    // 他の行が記録モード中なら先にキャンセル（同時に複数行を記録モードにしない）。
+                    for (int j = 0; j < KM_ROW_COUNT; ++j) {
+                        if (g_state->kmRecording[j]) {
+                            g_state->kmRecording[j] = false;
+                            SetText(g_state->hKmRec[j], L"記録");
+                            RefreshKmRow(j);
+                        }
+                    }
+                    // 記録モード開始: EDIT に focus、サブクラスが次の KeyDown を捕える。
+                    g_state->kmRecording[row] = true;
+                    SetText(g_state->hKmRec[row], L"押してください…");
+                    SetText(g_state->hKmEdit[row], std::string{});
+                    SetFocus(g_state->hKmEdit[row]);
+                    return 0;
+                }
+                if (kind == 2 && code == BN_CLICKED) {
+                    if (auto* v = KmTargetVec(row)) v->clear();
+                    RefreshKmRow(row);
+                    return 0;
+                }
+                return 0;
+            }
+
             switch (id) {
                 case ID_OK:
                     OnApply();
@@ -564,6 +737,13 @@ LRESULT CALLBACK SettingsProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
 
         case WM_DESTROY:
+            // EDIT サブクラスを解除（dangling コールバック回避）。
+            for (int i = 0; i < KM_ROW_COUNT; ++i) {
+                if (g_state->hKmEdit[i]) {
+                    RemoveWindowSubclass(g_state->hKmEdit[i], KmEditProc,
+                                         static_cast<UINT_PTR>(i));
+                }
+            }
             delete g_state;
             g_state = nullptr;
             return 0;
