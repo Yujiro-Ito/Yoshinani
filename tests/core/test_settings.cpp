@@ -4,6 +4,8 @@
 #include "application/Settings.h"
 
 using yoshinani::core::application::ParseSettings;
+using yoshinani::core::application::SerializeSettings;
+using yoshinani::core::application::Settings;
 
 TEST_CASE("既定（空文字）は triggerKeys = [Tab]") {
     auto s = ParseSettings("");
@@ -64,4 +66,30 @@ TEST_CASE("converter の部分指定・空文字は既定を保つ（トレイUI
     CHECK(s.converter.backend == "openai");       // 空文字 → 既定維持
     CHECK(s.converter.model == "gpt-5.4-nano");
     CHECK(s.converter.reasoningEffort == "low");  // 未指定 → 既定維持
+}
+
+TEST_CASE("SerializeSettings: 既定値はラウンドトリップする") {
+    Settings src{};
+    auto round = ParseSettings(SerializeSettings(src));
+    CHECK(round.triggerKeys    == src.triggerKeys);
+    CHECK(round.modeToggleKeys == src.modeToggleKeys);
+    CHECK(round.converter.backend         == src.converter.backend);
+    CHECK(round.converter.model           == src.converter.model);
+    CHECK(round.converter.reasoningEffort == src.converter.reasoningEffort);
+}
+
+TEST_CASE("SerializeSettings: 編集後の値もラウンドトリップする（トレイUIの書き戻し）") {
+    Settings src{};
+    src.triggerKeys    = {"Period", "Comma"};
+    src.modeToggleKeys = {"Tab"};
+    src.converter.backend         = "ollama";
+    src.converter.model           = "gemma4:e4b-it-qat";
+    src.converter.reasoningEffort = "medium";
+
+    auto round = ParseSettings(SerializeSettings(src));
+    CHECK(round.triggerKeys    == src.triggerKeys);
+    CHECK(round.modeToggleKeys == src.modeToggleKeys);
+    CHECK(round.converter.backend         == src.converter.backend);
+    CHECK(round.converter.model           == src.converter.model);
+    CHECK(round.converter.reasoningEffort == src.converter.reasoningEffort);
 }

@@ -7,6 +7,7 @@
 #include "OpenAiKanaKanjiConverter.h"
 #include "application/PreeditView.h"
 #include "domain/TriggerPolicy.h"
+#include <shlobj.h>
 #include <fstream>
 #include <memory>
 #include <new>
@@ -101,29 +102,58 @@ STDMETHODIMP_(ULONG) CTextService::Release() {
 
 // ---- 設定読込 ----------------------------------------------------------------
 
-// settings.json（DLL と同じディレクトリ）→ core パーサ。
-// ファイルが無い/不正でも既定値（Tab / openai gpt-5.4-mini low）になる。
+namespace {
+
+// 1ファイルを文字列に読む（存在しない/開けないなら空文字を返す）。
+std::string ReadAllText(const std::wstring& path) {
+    std::ifstream f(path.c_str());  // MSVC: wchar_t* パス可
+    if (!f) return {};
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+// %APPDATA%\yoshinani\settings.json のパスを返す（取得失敗時は空）。
+// タスクトレイ UI が書き込む正規の場所。DLL 同居 settings.json はフォールバック。
+std::wstring AppDataSettingsPath() {
+    PWSTR roaming = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roaming))) return {};
+    std::wstring p(roaming);
+    CoTaskMemFree(roaming);
+    p += L"\\yoshinani\\settings.json";
+    return p;
+}
+
+// DLL と同居する settings.json のパス（旧仕様。フォールバック用）。
+std::wstring DllSettingsPath() {
+    WCHAR dllPath[MAX_PATH];
+    DWORD n = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
+    if (n == 0 || n >= ARRAYSIZE(dllPath)) return {};
+    std::wstring path(dllPath);
+    const size_t slash = path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return {};
+    return path.substr(0, slash + 1) + L"settings.json";
+}
+
+}  // namespace
+
+// settings.json を読む。優先順位:
+//   1) %APPDATA%\yoshinani\settings.json（タスクトレイ UI の書き込み先・正規）
+//   2) DLL と同じディレクトリの settings.json（旧仕様・移行期のフォールバック）
+//   3) 既定値（Tab / openai gpt-5.4-mini low）
 yoshinani::core::application::Settings CTextService::LoadSettings() const {
     using yoshinani::core::application::ParseSettings;
     using yoshinani::core::application::Settings;
 
-    Settings settings;
-    WCHAR dllPath[MAX_PATH];
-    DWORD n = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
-    if (n > 0 && n < ARRAYSIZE(dllPath)) {
-        std::wstring path(dllPath);
-        const size_t slash = path.find_last_of(L"\\/");
-        if (slash != std::wstring::npos) {
-            path = path.substr(0, slash + 1) + L"settings.json";
-            std::ifstream f(path.c_str());  // MSVC: wchar_t* パス可
-            if (f) {
-                std::ostringstream ss;
-                ss << f.rdbuf();
-                settings = ParseSettings(ss.str());
-            }
-        }
+    if (const auto appData = AppDataSettingsPath(); !appData.empty()) {
+        const auto text = ReadAllText(appData);
+        if (!text.empty()) return ParseSettings(text);
     }
-    return settings;
+    if (const auto dllSide = DllSettingsPath(); !dllSide.empty()) {
+        const auto text = ReadAllText(dllSide);
+        if (!text.empty()) return ParseSettings(text);
+    }
+    return Settings{};
 }
 
 // 設定のキー名を VK へ写像（トリガー設定の分離点）。
@@ -698,9 +728,13 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
         }
 
         case InputAction::CommitRaw:
-            // Enter: 見えているもの（変換待ちソース + 打鍵中）を丸ごと生確定（変換しない）。
-            // 変換待ちは破棄＝飛行中の結果は到着時に無視される（4-A）。経路はモード切替と共通。
-            FlushAsRaw(pic);
+            // Enter の挙動（2026-06-10 ユーザー要望）:
+            //   変換中（in-flight）が残っている間は確定も改行もせず無視＝バッファ保護。
+            //   変換は裏で進み完了時に自動確定し、取消は Esc だけが効く。
+            //   変換中が無く打鍵中(preedit)だけのときは従来どおり生確定（変換せず手放す）。
+            // ※ キーは eaten 済み（OnTestKeyDown が消費）なので、無視でもアプリへは流れない。
+            if (!m_queue.Empty()) break;  // 変換中あり → 無視
+            FlushAsRaw(pic);              // 打鍵中のみ → 生確定
             break;
 
         case InputAction::Cancel:

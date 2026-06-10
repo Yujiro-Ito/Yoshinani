@@ -45,4 +45,16 @@ Settings ParseSettings(const std::string& jsonText) {
     return s;
 }
 
+std::string SerializeSettings(const Settings& s) {
+    nlohmann::json j;
+    j["triggerKeys"]    = s.triggerKeys;
+    j["modeToggleKeys"] = s.modeToggleKeys;
+    j["converter"] = {
+        {"backend",         s.converter.backend},
+        {"model",           s.converter.model},
+        {"reasoningEffort", s.converter.reasoningEffort},
+    };
+    return j.dump(2);
+}
+
 }  // namespace yoshinani::core::application

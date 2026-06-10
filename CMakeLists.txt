@@ -17,6 +17,7 @@ if(MSVC)
 endif()
 
 option(YOSHINANI_BUILD_TSF    "Build the TSF DLL (Windows only)"        ON)
+option(YOSHINANI_BUILD_TRAY   "Build the tray EXE (Windows only)"       ON)
 option(YOSHINANI_BUILD_DAEMON "Build the zenz daemon (needs llama.cpp)" OFF)
 option(YOSHINANI_BUILD_TESTS  "Build core unit tests"                   ON)
 
@@ -44,6 +45,10 @@ add_subdirectory(src/ipc)
 
 if(YOSHINANI_BUILD_TSF AND WIN32)
   add_subdirectory(src/tsf)
+endif()
+
+if(YOSHINANI_BUILD_TRAY AND WIN32)
+  add_subdirectory(src/tray)
 endif()
 
 if(YOSHINANI_BUILD_DAEMON)

@@ -19,4 +19,5 @@ target_link_libraries(yoshinani.tsf PRIVATE
   yoshinani.ipc
   ole32      # CoCreateInstance / StringFromCLSID / CoTaskMemFree
   advapi32   # Reg* / RegDeleteTreeW
+  shell32    # SHGetKnownFolderPath（settings.json の %APPDATA% 解決）
 )
