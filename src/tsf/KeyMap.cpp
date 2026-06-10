@@ -1,6 +1,23 @@
 // キー名 → VK 対応表。
 #include "KeyMap.h"
 
+std::optional<std::string> VkToKeyName(WPARAM vk) {
+    switch (vk) {
+        case VK_SPACE:        return "Space";
+        case VK_OEM_PERIOD:   return "Period";
+        case VK_OEM_COMMA:    return "Comma";
+        case VK_TAB:          return "Tab";
+        case VK_RETURN:       return "Enter";
+        case VK_KANJI:
+        case VK_OEM_AUTO:     // 半角/全角 揺れの吸収（KeyNameToVk と対称）
+        case VK_OEM_ENLW:     return "Kanji";
+        case VK_NONCONVERT:   return "NonConvert";
+        case VK_CONVERT:      return "Convert";
+        case VK_CAPITAL:      return "Capital";
+        default:              return std::nullopt;
+    }
+}
+
 std::optional<WPARAM> KeyNameToVk(const std::string& name) {
     if (name == "Space")      return static_cast<WPARAM>(VK_SPACE);
     if (name == "Period")     return static_cast<WPARAM>(VK_OEM_PERIOD);  // 。
