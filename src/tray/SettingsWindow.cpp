@@ -796,9 +796,18 @@ void SettingsWindow::Show(HINSTANCE hInst) {
     // 画面中央に配置（DPI を厳密に拾わない簡易計算）。
     const int sw = GetSystemMetrics(SM_CXSCREEN);
     const int sh = GetSystemMetrics(SM_CYSCREEN);
-    HWND h = CreateWindowExW(WS_EX_DLGMODALFRAME, kClass, L"よしなに 設定",
-                             WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                             (sw - W_MAIN) / 2, (sh - H_MAIN) / 2, W_MAIN, H_MAIN,
+
+    // W_MAIN x H_MAIN は「クライアント領域」として確保したい寸法。
+    // CreateWindowExW に渡す w/h は外形寸法なので AdjustWindowRect で枠/タイトルバー分を加算する
+    // （これを忘れると下段の OK/キャンセル/適用がタイトルバー分だけ下に押し出されて見切れる）。
+    constexpr DWORD kStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    constexpr DWORD kExStyle = WS_EX_DLGMODALFRAME;
+    RECT rcOuter{ 0, 0, W_MAIN, H_MAIN };
+    AdjustWindowRectEx(&rcOuter, kStyle, FALSE, kExStyle);
+    const int outerW = rcOuter.right  - rcOuter.left;
+    const int outerH = rcOuter.bottom - rcOuter.top;
+    HWND h = CreateWindowExW(kExStyle, kClass, L"よしなに 設定", kStyle,
+                             (sw - outerW) / 2, (sh - outerH) / 2, outerW, outerH,
                              nullptr, nullptr, hInst, nullptr);
     if (!h) {
         delete g_state;
