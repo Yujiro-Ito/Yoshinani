@@ -1,6 +1,6 @@
 # HANDOFF — よしなに (Yoshinani) セッション引き継ぎ
 
-> 最終更新: 2026-06-09。次セッションはまず本ファイル → [.spec/MAIN_SPEC.md](.spec/MAIN_SPEC.md) → [.spec/sub-specs/README.md](.spec/sub-specs/README.md) の順で読むと早い。
+> 最終更新: 2026-06-10。次セッションはまず本ファイル → [.spec/MAIN_SPEC.md](.spec/MAIN_SPEC.md) → [.spec/sub-specs/README.md](.spec/sub-specs/README.md) の順で読むと早い。
 
 ## 0. これは何
 ローマ字を適当に打ち、**Tab で一括変換＋自動確定**する自作 Windows IME（TSF / C++）。
@@ -21,6 +21,10 @@
 - **Phase 1（最小TIP）完了・実機確認済み（Chromium/Electron 系のみ）**: COM登録＋TSFプロファイル(ja-JP)登録、preedit 表示、Tab トリガー確定、Space 区切り、Esc 取消。**ただし標準アプリ（Win11 新メモ帳等）では TIP が未 engage（§2 既知課題）**。
 - **設定分離**: トリガーキーを `settings.json`(JSON, nlohmann) に分離（`core/application/Settings` + `src/tsf/KeyMap`）。
 - **トリガー = Tab、Space = 分かち書きの区切り**（最新コミット 83ebba7）。理由は §4 参照。
+- **入力リッチ化 R1/R2/Enter 完了・実機確認済み（2026-06-10・Chromium 系で全項目 OK）**:
+  - R1: Shift で大文字 / R2: 記号・数字も preedit に入る（空でも composition 開始＝Google IME 準拠）。実装は `KeyMap::VkToChar`（`ToUnicodeEx`・フラグ 0x4 でカーネル状態非破壊・UWP の lParam=0 は `MapVirtualKeyEx` フォールバック）。
+  - Enter: preedit 非空→**生確定**（`KeyKind::Enter`→`InputAction::CommitRaw`・変換なし・改行なし）/ 空→素通し（改行）。**Enter は triggerKeys に書いても無視**（`LoadTriggerVKs` で VK_RETURN 除外・Space と同じガード）。
+  - 1-D（モード切替）は未実装だが TBD は確定済み: 切替キー=半角/全角・既定=変換モード（spec [1-D](.spec/sub-specs/phase1-input-mode.md)）。
 - **変換方針 決定済み**: B方式（romaji→汎用LLM直渡し）。モデル = **Gemma 4 E4B-it-qat**（ローカル・GGUF・Apache 2.0）、**思考オフ(think=false)必須**。
 
 ### 検証結果（2026-06-09）と既知課題
@@ -29,7 +33,8 @@
   - **Win11 新メモ帳など標準アプリ = TIP が入力に engage しない**: キーが全く eaten されず素通し（直接入力・下線なし・Tab/Esc 無反応）。DLL 自体はメモ帳にもロードされる（列挙目的）が `OnKeyDown` が発火していない。
 - **🔴 既知課題: 標準 Win32/パッケージアプリでの TIP 非 engage**。`GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT` + `SYSTRAYSUPPORT` をカテゴリ登録に追加したが**それだけでは未解決**（必要だが不十分）。残る有力候補: キーボード open/close コンパートメント未設定 / フォーカス・表示属性まわりの実装不足。次に着手するなら **TIP に軽量ログ（Activate/OnKeyDown の発火をアプリ別に記録）で局所化**が確実。**ユーザー判断で当面保留 → Phase 3（B 方式の本丸）を優先**。
 - **DLL ロックは広範化**: register により `yoshinani.dll` が explorer.exe / Chrome / Unity / Claude などに常駐ロード。元パス `build/ninja-debug/.../yoshinani.dll` は reboot 級でないと再リンク不可。→ 当面は **`build.ps1 -BuildDir build/ninja-fix` 等の別ディレクトリ出力で回避**（実施済み）。恒久対策案（ビルド出力とは別ファイルを登録して「ビルド出力＝誰もロードしない」分離）は保留中。「毎回ユニーク名コピー」案は増え続けるため不採用で確定。
-- **現在 IME は登録されたまま**（変換結線版 `build/ninja-run1/src/tsf/yoshinani.dll`）。Chromium 系で **romaji→Tab→Gemma→日本語確定が実動作**。再ビルドは別 dir 必須（ロック）。不要になったら `regsvr32 /u`。ビルド dir が複数できている（ninja-debug/fix/run1/run2）が gitignore 配下・再起動で掃除可。
+- **現在 IME は登録されたまま**（R1/R2/Enter 版 `build/ninja-r1r2/src/tsf/yoshinani.dll`・2026-06-10 切替済み）。Chromium 系で **romaji→Tab→Gemma→日本語確定が実動作**。再ビルドは別 dir 必須（ロック）。不要になったら `regsvr32 /u`。ビルド dir が複数できている（ninja-debug/fix/run1/run2/r1r2）が gitignore 配下・再起動で掃除可。
+- **Ollama は再インストール済み（2026-06-10・0.30.6・winget）**: 前回環境から消えていたため入れ直し、`gemma4:e4b-it-qat` を再 pull（100% GPU・変換疎通 OK）。⚠ アイドル 5 分でモデルがアンロードされ、次の変換はロード込み ~50s（WinHTTP タイムアウト 60s ギリギリ・失敗時は生ローマ字フォールバック）。常駐させるなら `OLLAMA_KEEP_ALIVE` 設定（VRAM 3.1GB 占有と引き換え）。`OllamaKanaKanjiConverter` は keep_alive 未指定（残債）。
 
 ---
 
@@ -73,7 +78,9 @@
    - 3-E: **Tab → preedit の空白区切りローマ字を Gemma へ → 結果を確定して手放す**。失敗時フォールバック。
    - **4-A（async/背景変換）は早めに重要**: 変換 ~1s なので、LazyJP 同様「待たずに打ち続け、結果が後着」にしたい（§6.5 の継ぎ目を実働）。
 4. 任意: zenz 速い道（全部日本語＝数十ms）を二段目に。英数密の空白なし弱点は「直すなら既存IME」哲学で許容。
-5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**: R1 Shift で大文字 / R2 記号も preedit に入力（→ [1-B](.spec/sub-specs/phase1-preedit-lifecycle.md)、`ToUnicodeEx` で打鍵文字取得）/ Enter は Google 日本語入力準拠＝composition 中は生確定・空なら改行（→ [1-C](.spec/sub-specs/phase1-trigger-commit.md)）/ 変換⇄直接の入力モード切替（→ 新規 [1-D](.spec/sub-specs/phase1-input-mode.md)。**open/close 実装は §2 の標準アプリ非 engage 改善の候補**）。いずれも未実装。
+5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**:
+   - ~~R1 Shift 大文字 / R2 記号入力 / Enter 生確定~~ **完了（2026-06-10・実機確認 OK）**。
+   - **残り = 1-D 入力モード切替**（変換⇄直接・[1-D](.spec/sub-specs/phase1-input-mode.md)）。TBD 確定済み: 切替キー=半角/全角・既定=変換。**open/close コンパートメント実装は §2 の標準アプリ非 engage 改善の候補**＝次の有力着手先。
 
 ---
 
@@ -88,8 +95,8 @@
 ---
 
 ## 7. git 状態
-- `main` ブランチ。本セッション（2026-06-09）で以下を追加・**全 push 済み**（ハッシュは `git log --oneline` 参照）:
-  - TSF イマーシブ/トレイ互換カテゴリ（`Register.cpp`）/ `build.ps1` に `-BuildDir`・`-Target`（DLL ロック回避）/ Phase 3 土台 3-A・3-D＋テスト / 入力要件 spec 反映(1-B/1-C/新規1-D) / **3-E 変換結線（Ollama 代用）**。
-- 残債: ① `TextService` が ipc 具体実装(Ollama)を直接 new（バックエンド選択は未実装） ② 標準アプリ TIP 非 engage（§2） ③ R1/R2/Enter/1-D 入力拡張は未実装。
+- `main` ブランチ。2026-06-09 セッション分は**全 push 済み**（TSF カテゴリ / build.ps1 拡張 / 3-A・3-D / spec 反映 / 3-E 変換結線）。
+- **2026-06-10 セッション: R1/R2/Enter 実装＋spec TBD 解消＋本 HANDOFF 更新**（コードレビュー済・ctest 緑・実機確認 OK）。コミットはユーザー指示待ち。
+- 残債: ① `TextService` が ipc 具体実装(Ollama)を直接 new（バックエンド選択は未実装） ② 標準アプリ TIP 非 engage（§2） ③ 1-D 入力モード切替が未実装 ④ `OllamaKanaKanjiConverter` の keep_alive 未指定 ⑤ `verify-ime.ps1` が `-BuildDir` 未対応（ninja-debug 固定）。
 - `build/ninja-*`（debug/fix/run1/run2）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。
