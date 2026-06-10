@@ -1,6 +1,7 @@
 // 1-A TSF スケルトン — 登録/解除の実装。
 #include "Globals.h"
 #include "Register.h"
+#include "resource.h"
 #include <strsafe.h>
 
 static const WCHAR c_szInProcSvr32[] = L"InProcServer32";
@@ -70,12 +71,23 @@ BOOL RegisterProfiles() {
         return FALSE;
     }
 
+    // IME プロファイルアイコン: 自分の DLL パスを pchIconFile に、リソース ID を uIconIndex に。
+    // OS は規定の言語プロファイル UI（設定 > 言語 / Win+Space の IME 切替リスト / 言語バー）で
+    // このアイコンを参照する。失敗してもプロファイル登録自体は続行（アイコンは「無印」になる）。
+    WCHAR dllPath[MAX_PATH] = {};
+    const DWORD pathLen = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
+    const WCHAR* pIcon = (pathLen > 0 && pathLen < ARRAYSIZE(dllPath)) ? dllPath : nullptr;
+    const ULONG iconChars = pIcon ? static_cast<ULONG>(pathLen) : 0;
+
     BOOL ok = FALSE;
     if (SUCCEEDED(pProfiles->Register(CLSID_Yoshinani))) {
+        // uIconIndex は MSDN によると「pchIconFile 内アイコンの 0-based index」で、
+        // Win32 リソース ID ではない。当 DLL にはアイコンが1つだけ埋まっているので 0 で十分
+        // （.rc の IDI_TIP は識別用の定数として残し、Register 側では使わない）。
         HRESULT hr = pProfiles->AddLanguageProfile(
             CLSID_Yoshinani, YOSHINANI_LANGID, GUID_YoshinaniProfile,
             YOSHINANI_DESC, static_cast<ULONG>(lstrlenW(YOSHINANI_DESC)),
-            nullptr, 0, 0);
+            pIcon, iconChars, 0u);
         ok = SUCCEEDED(hr);
     }
     pProfiles->Release();

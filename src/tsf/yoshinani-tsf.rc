@@ -1,0 +1,6 @@
+// よしなに (Yoshinani) TIP DLL — Win32 リソーススクリプト。
+// アイコン: ../../assets/yoshinani.ico（暖簾「よ」・マルチサイズ）。
+// AddLanguageProfile に DLL 自身のパス + IDI_TIP を渡して言語プロファイルへ反映する。
+#include "resource.h"
+
+IDI_TIP ICON "../../assets/yoshinani.ico"
