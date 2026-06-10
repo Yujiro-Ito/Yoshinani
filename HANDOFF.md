@@ -34,7 +34,10 @@
 - **🔴 既知課題: 標準 Win32/パッケージアプリでの TIP 非 engage**。`GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT` + `SYSTRAYSUPPORT` をカテゴリ登録に追加したが**それだけでは未解決**（必要だが不十分）。残る有力候補: キーボード open/close コンパートメント未設定 / フォーカス・表示属性まわりの実装不足。次に着手するなら **TIP に軽量ログ（Activate/OnKeyDown の発火をアプリ別に記録）で局所化**が確実。**ユーザー判断で当面保留 → Phase 3（B 方式の本丸）を優先**。
 - **DLL ロックは広範化**: register により `yoshinani.dll` が explorer.exe / Chrome / Unity / Claude などに常駐ロード。元パス `build/ninja-debug/.../yoshinani.dll` は reboot 級でないと再リンク不可。→ 当面は **`build.ps1 -BuildDir build/ninja-fix` 等の別ディレクトリ出力で回避**（実施済み）。恒久対策案（ビルド出力とは別ファイルを登録して「ビルド出力＝誰もロードしない」分離）は保留中。「毎回ユニーク名コピー」案は増え続けるため不採用で確定。
 - **クラウド変換 結線済み（2026-06-10・実機 OK）**: `OpenAiKanaKanjiConverter`（WinHTTP HTTPS→`/v1/chat/completions`）を追加し、settings.json の `converter`（backend/model/reasoningEffort）で選択可能に（`TextService` の直接 new 残債①解消）。**既定 = openai / gpt-5.4-mini / medium**。キーは `%USERPROFILE%\.yoshinani\openai.key`（配置済み・コミット禁止）。キー不在/失敗は生ローマ字フォールバック。**空白なしローマ字が実機で変換できることを確認**（長文・難文も OK。誤字は「忠実変換」ルールにより音のまま残る＝仕様）。コピペ文字列は IME を経由しないので変換不可（TSF の仕様）。
-- **現在 IME は登録されたまま**（クラウド変換版 `build/ninja-cloud1/src/tsf/yoshinani.dll`・2026-06-10 切替済み）。Chromium 系で **romaji→Tab→Gemma→日本語確定が実動作**。再ビルドは別 dir 必須（ロック）。不要になったら `regsvr32 /u`。ビルド dir が複数できている（ninja-debug/fix/run1/run2/r1r2）が gitignore 配下・再起動で掃除可。
+- **4-A async + 4-B 下線区別 完了・実機確認 OK（2026-06-10・ユーザー高評価）**: Tab で打鍵中セグメントを `ConversionQueue`(容量8) に enqueue → ワーカースレッド変換（`ConvertMarshaller` がメッセージ専用ウィンドウで TIP スレッドへ結果を返送）→ **投入順に先頭だけ確定**（`ITfComposition::ShiftStart` で composition を縮小）。変換中=点線下線 / 入力中=実線下線（`ITfDisplayAttributeProvider`）。Esc=全取消（遅延結果は自然無視）/ Enter=全生確定 / Backspace=打鍵中のみ / 満杯時 Tab 無視。
+- **コスト知見＆既定変更**: reasoning medium は思考トークンが output 課金され検証 ~150 コールで $0.10（月3万変換なら ~$20 規模）→ **既定 reasoningEffort を low に変更**（A/B で medium と精度僅差・数分の1のコスト）。
+- **Claude CLI バックエンド案は保留**: `claude -p --model haiku` は品質良好だが単発起動が遅い。`--bare` は高速化するが**サブスク認証(OAuth)非対応**で 401。常駐（Agent SDK + stream-json、3-B/3-C のデーモン+パイプ設計に載る・継続モードの土台にもなる）が本命だが、**2026/6/15 以降 headless はサブスクと別クレジット枠**の情報があり要確認 → 着手前に料金体系を確認すること。
+- **現在 IME は登録されたまま**（async 版 `build/ninja-async1/src/tsf/yoshinani.dll`・2026-06-10 切替済み。隣に `settings.json`（reasoningEffort=low）配置済み）。Chromium 系で **romaji→Tab→Gemma→日本語確定が実動作**。再ビルドは別 dir 必須（ロック）。不要になったら `regsvr32 /u`。ビルド dir が複数できている（ninja-debug/fix/run1/run2/r1r2）が gitignore 配下・再起動で掃除可。
 - **Ollama は再インストール済み（2026-06-10・0.30.6・winget）**: 前回環境から消えていたため入れ直し、`gemma4:e4b-it-qat` を再 pull（100% GPU・変換疎通 OK）。⚠ アイドル 5 分でモデルがアンロードされ、次の変換はロード込み ~50s（WinHTTP タイムアウト 60s ギリギリ・失敗時は生ローマ字フォールバック）。常駐させるなら `OLLAMA_KEEP_ALIVE` 設定（VRAM 3.1GB 占有と引き換え）。`OllamaKanaKanjiConverter` は keep_alive 未指定（残債）。
 
 ---
@@ -82,7 +85,7 @@
    - 3-B: デーモン = llama.cpp + Gemma 4 E4B GGUF（まずは Ollama で代用可）。**think=false / 常駐(keep_alive) / num_ctx 2048**。プロンプトは §4 のもの。
    - 3-C: 名前付きパイプ IPC（TIP↔デーモン）。デーモン不在時は生ローマ字 or かなで確定するフォールバック。
    - 3-E: **Tab → preedit の空白区切りローマ字を Gemma へ → 結果を確定して手放す**。失敗時フォールバック。
-   - **4-A（async/背景変換）は早めに重要**: mini/medium は ~1.8s（同期だと preedit が固まる）。LazyJP 同様「待たずに打ち続け、結果が後着」にしたい（§6.5 の継ぎ目を実働）。
+   - ~~4-A（async/背景変換）~~ **完了（2026-06-10・4-B 下線区別と同時・実機 OK）**。
    - **継続モード（文脈チェイン）をいずれ入れる（2026-06-10 ユーザー要望）**: 現状は毎回独立リクエスト（会話履歴なし）。LazyJP 式に直前の確定文を文脈として渡し、文脈依存の変換精度を上げる。`/rule` インラインルールも候補。プロンプトは `OpenAiKanaKanjiConverter.cpp` 参照。
 4. 任意: zenz 速い道（全部日本語＝数十ms）を二段目に。英数密の空白なし弱点は「直すなら既存IME」哲学で許容。
 5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**:
@@ -103,7 +106,7 @@
 
 ## 7. git 状態
 - `main` ブランチ。2026-06-09 セッション分は**全 push 済み**（TSF カテゴリ / build.ps1 拡張 / 3-A・3-D / spec 反映 / 3-E 変換結線）。
-- **2026-06-10 セッション**: ① R1/R2/Enter 実装（push 済み: 0795085, 7377634） ② クラウド A/B 実測 → `OpenAiKanaKanjiConverter` 結線＋settings.json バックエンド選択（レビュー済・ctest 緑・実機 OK）。
-- 残債: ① 標準アプリ TIP 非 engage（§2） ② 1-D 入力モード切替が未実装 ③ `OllamaKanaKanjiConverter` の keep_alive 未指定 ④ `verify-ime.ps1` が `-BuildDir` 未対応（ninja-debug 固定） ⑤ 4-A async（同期 1.8s の体感改善） ⑥ 継続モード（§5）。
+- **2026-06-10 セッション**: ① R1/R2/Enter 実装 ② クラウド A/B → `OpenAiKanaKanjiConverter` 結線（4cae984, e67001f・push 状況は git log 参照） ③ **4-A async + 4-B 下線区別**＋既定 effort=low（レビュー済・ctest 緑・実機 OK）。
+- 残債: ① 標準アプリ TIP 非 engage（§2） ② 1-D 入力モード切替が未実装 ③ `OllamaKanaKanjiConverter` の keep_alive 未指定 ④ `verify-ime.ps1` が `-BuildDir` 未対応（ninja-debug 固定） ⑤ 継続モード（§5・Claude 常駐デーモン案と相性） ⑥ Claude CLI バックエンド（§2 保留・料金体系確認が先）。
 - `build/ninja-*`（debug/fix/run1/run2）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。
