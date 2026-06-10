@@ -3,8 +3,8 @@
 #include "EditSession.h"
 #include "KeyMap.h"
 #include "OllamaKanaKanjiConverter.h"
+#include "OpenAiKanaKanjiConverter.h"
 #include "domain/TriggerPolicy.h"
-#include "application/Settings.h"
 #include <fstream>
 #include <memory>
 #include <new>
@@ -89,13 +89,13 @@ STDMETHODIMP_(ULONG) CTextService::Release() {
 
 // ---- 設定読込 ----------------------------------------------------------------
 
-// settings.json（DLL と同じディレクトリ）→ core パーサ → キー名を VK へ写像。
-// ファイルが無い/不正でも既定（Tab）になる。これがトリガー設定の分離点。
-std::set<WPARAM> CTextService::LoadTriggerVKs() const {
+// settings.json（DLL と同じディレクトリ）→ core パーサ。
+// ファイルが無い/不正でも既定値（Tab / openai gpt-5.4-mini medium）になる。
+yoshinani::core::application::Settings CTextService::LoadSettings() const {
     using yoshinani::core::application::ParseSettings;
     using yoshinani::core::application::Settings;
 
-    Settings settings;  // 既定 = {"Tab"}
+    Settings settings;
     WCHAR dllPath[MAX_PATH];
     DWORD n = GetModuleFileNameW(g_hInst, dllPath, ARRAYSIZE(dllPath));
     if (n > 0 && n < ARRAYSIZE(dllPath)) {
@@ -111,7 +111,12 @@ std::set<WPARAM> CTextService::LoadTriggerVKs() const {
             }
         }
     }
+    return settings;
+}
 
+// 設定のキー名を VK へ写像（トリガー設定の分離点）。
+std::set<WPARAM> CTextService::LoadTriggerVKs(
+        const yoshinani::core::application::Settings& settings) const {
     std::set<WPARAM> vks;
     for (const std::string& name : settings.triggerKeys) {
         if (auto vk = KeyNameToVk(name)) {
@@ -128,16 +133,32 @@ std::set<WPARAM> CTextService::LoadTriggerVKs() const {
     return vks;
 }
 
+// 変換バックエンドの生成。model 空文字は「バックエンド既定」（Settings.h）。
+// A/B 実測（2026-06-10）より既定はクラウド openai gpt-5.4-mini + medium
+// （空白なしローマ字を実質解決。ローカル派は settings.json で "ollama" に切替）。
+std::unique_ptr<yoshinani::core::domain::IKanaKanjiConverter> CTextService::CreateConverter(
+        const yoshinani::core::application::ConverterSettings& cs) const {
+    if (cs.backend == "ollama") {
+        if (cs.model.empty()) return std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>();
+        return std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>(L"localhost", 11434,
+                                                                          cs.model);
+    }
+    if (cs.model.empty()) {
+        return std::make_unique<yoshinani::ipc::OpenAiKanaKanjiConverter>("gpt-5.4-mini",
+                                                                          cs.reasoningEffort);
+    }
+    return std::make_unique<yoshinani::ipc::OpenAiKanaKanjiConverter>(cs.model, cs.reasoningEffort);
+}
+
 // ---- 活性化 ------------------------------------------------------------------
 
 STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD /*dwFlags*/) {
     m_pThreadMgr = ptim;
     if (m_pThreadMgr) m_pThreadMgr->AddRef();
     m_tfClientId = tid;
-    m_triggerVKs = LoadTriggerVKs();
-    // v1 のショートカット: TIP が具体実装(Ollama)を直接 new している（ポート経由の DI ではない）。
-    // バックエンド選択（Ollama / クラウド GPT / 自作デーモン）は将来 Factory/設定で差し替える残債。
-    m_converter = std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>();
+    const auto settings = LoadSettings();
+    m_triggerVKs = LoadTriggerVKs(settings);
+    m_converter  = CreateConverter(settings.converter);
 
     if (!InitKeyEventSink()) {
         Deactivate();

@@ -5,6 +5,7 @@
 #pragma once
 #include "Globals.h"
 #include "application/InputSession.h"
+#include "application/Settings.h"
 #include "domain/ports/IKanaKanjiConverter.h"
 #include <functional>
 #include <memory>
@@ -55,8 +56,13 @@ private:
                        const std::u16string& text);
     void    EndComposition(TfEditCookie ec);
 
-    // 設定（settings.json）から確定トリガーの VK 集合を構築する。
-    std::set<WPARAM> LoadTriggerVKs() const;
+    // settings.json（DLL と同じディレクトリ）を読む。無い/不正なら既定値。
+    yoshinani::core::application::Settings LoadSettings() const;
+    // 設定から確定トリガーの VK 集合を構築する。
+    std::set<WPARAM> LoadTriggerVKs(const yoshinani::core::application::Settings& settings) const;
+    // 設定から変換バックエンド（openai / ollama）を生成する（3-A ポート経由の注入）。
+    std::unique_ptr<yoshinani::core::domain::IKanaKanjiConverter>
+        CreateConverter(const yoshinani::core::application::ConverterSettings& cs) const;
 
     LONG          m_cRef;
     ITfThreadMgr* m_pThreadMgr;
