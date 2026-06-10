@@ -1,6 +1,6 @@
 # HANDOFF — よしなに (Yoshinani) セッション引き継ぎ
 
-> 最終更新: 2026-06-10。次セッションはまず本ファイル → [.spec/MAIN_SPEC.md](.spec/MAIN_SPEC.md) → [.spec/sub-specs/README.md](.spec/sub-specs/README.md) の順で読むと早い。
+> 最終更新: 2026-06-10 後半（タスクトレイ EXE / IME プロファイルアイコン / 片方向遷移キー / Keymap キャプチャ UI）。次セッションはまず本ファイル → [.spec/MAIN_SPEC.md](.spec/MAIN_SPEC.md) → [.spec/sub-specs/README.md](.spec/sub-specs/README.md) の順で読むと早い。
 
 ## 0. これは何
 ローマ字を適当に打ち、**Tab で一括変換＋自動確定**する自作 Windows IME（TSF / C++）。
@@ -25,6 +25,10 @@
   - R1: Shift で大文字 / R2: 記号・数字も preedit に入る（空でも composition 開始＝Google IME 準拠）。実装は `KeyMap::VkToChar`（`ToUnicodeEx`・フラグ 0x4 でカーネル状態非破壊・UWP の lParam=0 は `MapVirtualKeyEx` フォールバック）。
   - Enter: preedit 非空→**生確定**（`KeyKind::Enter`→`InputAction::CommitRaw`・変換なし・改行なし）/ 空→素通し（改行）。**Enter は triggerKeys に書いても無視**（`LoadTriggerVKs` で VK_RETURN 除外・Space と同じガード）。
 - **1-D 入力モード切替 完了（2026-06-10・コミット `c308a8d`）**: 半角/全角キーで 変換⇄直接 を切替（settings.json `modeToggleKeys`・既定 "Kanji"＝VK_KANJI/OEM_AUTO/OEM_ENLW をエイリアス）。モード状態は core `InputModeState`、TSF は `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` と双方向同期（`ITfCompartmentEventSink` で言語バー/アプリ側切替にも追従）。直接入力モードは切替キー以外すべて素通し＝コーディング可。切替/外部 close 時は未確定を生確定して保護（`FlushAsRaw`・sink からは async edit session）。**activate 時は常に変換モードで開始**（open/close はスレッド共有のため直前の別 IME の close 値を引き継ぐと「選んだのに動かない」になるのを防ぐ）。⚠ ランタイム実機確認は本コミット版では未実施（前回の動作確認はビルド乱れ区間と重なり信頼できない。次回まず実機確認すること）。
+- **タスクトレイ EXE + 設定ウィンドウ 完了（2026-06-10 後半・最終 `692e646`）**: `src/tray/` に `yoshinani-tray.exe` 追加（Win32 GUI・Mutex 二重起動防止・HWND_MESSAGE 常駐）。通知領域メニューは「設定を開く / 終了」のみ、左クリック1発で設定 Window を開く。設定 Window はタブ付き（General / Keymap / Model）。General＝settings.json パス表示 + JSON/フォルダを開く、Model＝バックエンド連動（OpenAI/Ollama）でモデル ComboBox を入替・reasoningEffort は OpenAI のときだけ Enable、Keymap＝**キーキャプチャ UI**（「記録」→押したキーを VkToTrayName で名前化して EDIT に。Esc キャンセル・クリア有り）。Visual Styles マニフェスト同梱（CMake は `/MANIFEST:NO` で自動マニフェストを抑制し .rc 側の `1 RT_MANIFEST` を使う）。書き込みは tmp + MoveFileEx の原子置換。
+- **設定ファイルパス統一**: `%APPDATA%\yoshinani\settings.json` を正規、TIP `LoadSettings` は「APPDATA 優先 → DLL 同居フォールバック」。トレイ EXE の書込先と TIP の読込先が同じパスに合流。SHGetKnownFolderPath(FOLDERID_RoamingAppData) を `src/tsf/CMakeLists.txt` に shell32 リンクして使用。
+- **TIP プロファイルアイコン 完了（コミット `3bdf3ce`）**: `assets/yoshinani.ico`（暖簾「よ」・256/64/48/40/32/24/20/16 マルチサイズ・MakeTransparent で背景透過）を `src/tsf/yoshinani-tsf.rc` 経由で DLL に埋め込み、Register.cpp の AddLanguageProfile に `GetModuleFileNameW` で取った DLL 絶対パス + `uIconIndex=0`（MSDN 仕様: 0-based index）を渡す。設定 > 言語 / Win+Space / 言語バー に暖簾アイコンが表示される。**現在 register されている DLL**: `build/ninja-imeicon/src/tsf/yoshinani.dll`（コミット `3bdf3ce` 時点で `regsvr32 /u` 旧 → `regsvr32` 新の差替済み・実機反映確認はユーザー目視）。
+- **片方向モード遷移キー 完了（コミット `afc5b5f`）**: Google 日本語入力流に `Settings.conversionOnKeys`（直接→変換）/ `Settings.directOnKeys`（変換→直接）を追加（既存 `modeToggleKeys` は両方向トグルとして残置）。TIP の OnTestKeyDown/OnKeyDown で「トグル / 片方向 ConvOn / 片方向 DirectOn」の 3 系統を統一判定。順序固定: `m_mode.Set/Toggle` → `SetOpenCloseCompartment`（OnChange の同期発火による二重反転を防ぐ）。KeyMap に `NonConvert/Convert/Capital` を追加（`Hiragana` は SDK 未定義のため NOTE で保留）。⚠ ランタイム実機確認は未実施（次回タスク #16 の検証時と併せて）。
 - **変換方針 決定済み**: B方式（romaji→汎用LLM直渡し）。モデル = **Gemma 4 E4B-it-qat**（ローカル・GGUF・Apache 2.0）、**思考オフ(think=false)必須**。
 
 ### 検証結果（2026-06-09）と既知課題
@@ -92,6 +96,15 @@
 5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**:
    - ~~R1 Shift 大文字 / R2 記号入力 / Enter 生確定~~ **完了（2026-06-10・実機確認 OK）**。
    - ~~1-D 入力モード切替~~ **実装完了（2026-06-10・`c308a8d`・実機未確認）**。open/close コンパートメント実装が §2 の標準アプリ非 engage を改善するかは次回実機で要検証。
+6. **タスクトレイ・設定 UI・モード切替の発展（2026-06-10 後半）**:
+   - ~~タスクトレイ EXE + 設定ウィンドウ~~ **完了（`692e646`）**。Keymap タブはキーキャプチャ UI（記録ボタン → キー押下で割当）。
+   - ~~settings.json を %APPDATA%\yoshinani\ に統一~~ **完了**。
+   - ~~TIP プロファイルアイコン（暖簾）~~ **完了（`3bdf3ce`）**。
+   - ~~片方向モード遷移キー（conversionOnKeys / directOnKeys）~~ **完了（`afc5b5f`）**。
+7. **次の磨き候補**:
+   - **#22 ITfLangBarItemButton 動的アイコン**（直接=「A」/ 変換=暖簾）。Mozc 級の言語バーアイテム実装が要る・規模大。Win10/11 の Modern Input Indicator が表示権限を握る場合があり、効きを実機 PoC で確認する必要あり。
+   - Keymap タブの複数キー対応（現状は各項目 1 キー）。「+ 追加」「× 削除」で vector に複数要素を入れる UI へ。
+   - トレイ EXE の自動起動（スタートアップ登録 or タスクスケジューラ）。
 
 ---
 
@@ -100,15 +113,29 @@
 - **ランタイム確認**: `verify-ime` スキル、または `scripts/verify-ime.ps1 -Action Check|Build|Register|Unregister`。
 - **Gemma 試行**: `ollama` API（localhost:11434）に `think=false` / `options.num_ctx=2048` で投げる。前セッションの PowerShell スニペット参照。
 - **仕様**: `.spec/MAIN_SPEC.md`、`.spec/sub-specs/`（README 索引 + phaseN-*.md。Phase 0-4 全 spec 作成済）。
-- **コード**: `src/core/domain/TriggerPolicy.*`（判定）、`src/core/application/{InputSession,Settings}.*`、`src/tsf/{TextService,Classify(内),KeyMap,Register,Globals,ClassFactory,dllmain,EditSession}.*`。
+- **コード**: `src/core/domain/TriggerPolicy.*`（判定）、`src/core/application/{InputSession,Settings}.*`、`src/tsf/{TextService,Classify(内),KeyMap,Register,Globals,ClassFactory,dllmain,EditSession}.*`、`src/tray/{main,SettingsWindow}.cpp`（タスクトレイ + 設定 GUI）、`assets/yoshinani.ico`（暖簾アイコン）。
 - **CLSID/Profile GUID**: `src/tsf/Globals.cpp` に固定（`CLSID_Yoshinani` = 2405C199-...、Profile = D73A3464-...）。
+- **設定 JSON 場所**: `%APPDATA%\yoshinani\settings.json`（正規）・DLL 同居 settings.json はフォールバック。
+- **タスクトレイ起動**: `build/ninja-modekey/src/tray/yoshinani-tray.exe`（最新ビルド・スタートアップ登録は未実装）。
+- **DLL 登録切替**: `regsvr32 /u /s "<old.dll>"; regsvr32 /s "<new.dll>"`（管理者権限）。CLSID `{2405C199-9A3D-47FC-A662-184378973C12}` の `HKLM\SOFTWARE\Classes\CLSID\<...>\InProcServer32` の `(default)` が現在の登録 DLL。
 
 ---
 
 ## 7. git 状態
 - `main` ブランチ。2026-06-09 セッション分は**全 push 済み**（TSF カテゴリ / build.ps1 拡張 / 3-A・3-D / spec 反映 / 3-E 変換結線）。
-- **2026-06-10 セッション**: ① R1/R2/Enter 実装 ② クラウド A/B → `OpenAiKanaKanjiConverter` 結線 ③ 4-A async + 4-B 下線区別＋既定 effort=low ④ 継続モード（文脈チェイン） ⑤ **1-D 入力モード切替**（`c308a8d`。①〜④はレビュー済・実機 OK。⑤はレビュー済・ctest 緑だが**実機未確認**）。
-  - ⚠ 注意: 本セッション後半はターミナル出力が乱れ、一時「1-D の追加コミット・push・GitHub Discussion 投稿・memory 追記」を実施したと誤認したが**いずれも未実行**だった。実際の到達点は上記＝1-D を `c308a8d` でコミットしたところまで。push 状況は `git status -sb` で要確認。
-- 残債: ① **1-D の実機確認**（メモ帳含む。標準アプリ engage が 4-B/1-D で改善したかも併せて検証） ② `OllamaKanaKanjiConverter` の keep_alive 未指定 ③ `verify-ime.ps1` が `-BuildDir` 未対応 ④ Claude CLI バックエンド（`--bare` はサブスク認証不可・常駐 SDK 案は料金体系確認が先） ⑤ `/rule` インラインルール（将来候補）。
-- `build/ninja-*`（debug/fix/run1/run2）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
+- **2026-06-10 前半**: ① R1/R2/Enter 実装 ② クラウド A/B → `OpenAiKanaKanjiConverter` 結線 ③ 4-A async + 4-B 下線区別＋既定 effort=low ④ 継続モード（文脈チェイン） ⑤ **1-D 入力モード切替**（`c308a8d`。①〜④はレビュー済・実機 OK。⑤はレビュー済・ctest 緑だが**実機未確認**）。
+- **2026-06-10 後半**（push 状況は `git status -sb` で要確認）:
+  - `54ed438` Phase1+ タスクトレイ UI 初版（backend/model/effort 通知領域メニュー）
+  - `5f4e891` タスクトレイを設定ウィンドウ＋暖簾アイコンに刷新（タブ付き GUI）
+  - `3bdf3ce` TIP DLL に IME プロファイルアイコン埋め込み（AddLanguageProfile + DLL パス + uIconIndex=0）
+  - `afc5b5f` モード切替を片方向2系統に拡張（conversionOnKeys/directOnKeys） + 設定 UI 修正（General 最左・ラベル見切れ解消）
+  - `692e646` Keymap タブをキーキャプチャ UI に（記録ボタン → 押下キーを名前で割当）
+- 残債:
+  - **1-D + 片方向モード遷移キーの実機確認**（メモ帳含む。標準アプリ engage が 4-B/1-D で改善したかも併せて検証）
+  - **#22 ITfLangBarItemButton 動的アイコン**（直接=「A」/ 変換=暖簾。Mozc 級実装・規模大）
+  - Keymap タブの複数キー対応（現状 1 項目 1 キーのみ）
+  - トレイ EXE の自動起動（スタートアップ登録）
+  - `OllamaKanaKanjiConverter` の keep_alive 未指定 / `verify-ime.ps1` が `-BuildDir` 未対応 / Claude CLI バックエンド料金確認 / `/rule` インラインルール（将来候補）
+  - `.agents/` / `AGENTS.md` 未コミット（Codex 用設定の残り・今セッションでは触らず温存）
+- `build/ninja-*`（debug/fix/run1/run2/tray/imeicon/modekey 等）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。
