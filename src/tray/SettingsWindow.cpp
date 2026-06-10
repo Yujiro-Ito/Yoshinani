@@ -189,8 +189,10 @@ const std::vector<ModelChoice>& ModelsFor(const std::string& backend) {
 
 // ---- レイアウト・コントロール ID ---------------------------------------------
 
-constexpr int W_MAIN = 560;
-constexpr int H_MAIN = 380;
+// クライアント領域の論理寸法。DPI Aware マニフェスト有効時は OS がスケールするので、
+// 余裕を持って大きめに取る（小さいと下段ボタンが見切れる）。
+constexpr int W_MAIN = 620;
+constexpr int H_MAIN = 460;
 
 // タブ・ボタン
 constexpr int ID_TAB     = 100;
@@ -475,9 +477,10 @@ void CreateChildren(HWND hWnd) {
     st->hFont = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 
     // タブ
+    // タブはボタン領域（下端 50px 帯）を避けて高さを取る。
     st->hTab = CreateWindowExW(0, WC_TABCONTROLW, L"",
                                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-                               12, 12, W_MAIN - 28, H_MAIN - 90,
+                               12, 12, W_MAIN - 28, H_MAIN - 80,
                                hWnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TAB)), hi, nullptr);
     SendMessageW(st->hTab, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
     TCITEMW it{};
@@ -625,8 +628,8 @@ void CreateChildren(HWND hWnd) {
         L"バックエンドを切替えるとモデルは「バックエンド既定」にリセットされます。\n"
         L"OpenAI モデル既定: gpt-5.4-mini / Ollama モデル既定: gemma4:e4b-it-qat。");
 
-    // ----- 下段ボタン -----
-    const int BY = H_MAIN - 64;
+    // ----- 下段ボタン -----（クライアント下端から余裕 50px）
+    const int BY = H_MAIN - 50;
     st->hApply  = mkButton(W_MAIN - 100, BY, 80, ID_APPLY,  L"適用");
     st->hCancel = mkButton(W_MAIN - 188, BY, 80, ID_CANCEL, L"キャンセル");
     st->hOK     = mkButton(W_MAIN - 276, BY, 80, ID_OK,     L"OK");
