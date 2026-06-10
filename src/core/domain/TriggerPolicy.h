@@ -11,6 +11,7 @@ namespace yoshinani::core::domain {
 enum class KeyKind {
     Character,   // 通常文字（preedit に足す。文字値は別途渡す）
     Trigger,     // 確定トリガー（既定 Tab）
+    Enter,       // 生確定（Google IME 準拠: preedit 中は変換せずそのまま確定・空なら素通し＝改行）
     Space,       // 区切りの空白。preedit 中のみ足す（空のときは素通し）
     Backspace,
     Escape,
@@ -20,7 +21,8 @@ enum class KeyKind {
 // IME が取るべきアクション。
 enum class InputAction {
     Append,       // preedit に文字を足す
-    Commit,       // 確定して手放す（トリガーキー自体は消費）
+    Commit,       // 変換して確定し手放す（トリガーキー自体は消費）
+    CommitRaw,    // 変換せず preedit をそのまま確定して手放す（Enter）
     DeleteLast,   // 末尾 1 文字削除
     Cancel,       // 取り消して手放す（Esc）
     PassThrough,  // 食わずにアプリへ

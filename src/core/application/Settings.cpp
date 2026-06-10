@@ -6,7 +6,7 @@
 namespace yoshinani::core::application {
 
 Settings ParseSettings(const std::string& jsonText) {
-    Settings s;  // 既定（triggerKeys = ["Space"]）
+    Settings s;  // 既定（triggerKeys = ["Tab"]）
     try {
         const auto j = nlohmann::json::parse(jsonText);
         if (j.contains("triggerKeys") && j.at("triggerKeys").is_array()) {

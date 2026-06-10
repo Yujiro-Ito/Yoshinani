@@ -68,7 +68,8 @@
   （例: `"super nice"` / `'tyousugoi'` / `[konna kanji nimo]` / `wa----sugoi!!` / `konna nyuuryoku mo!?`）。
 - 実装方針は R1 と同じく**打鍵文字を `ToUnicodeEx` で取得**して追記（記号ごとの VK 個別マッピングが不要になる）。
 - 「食う／素通しする」線引き:
-  - composition 中は印字可能文字（Unicode グラフィック文字）を食って追記。
+  - **印字可能文字は preedit が空でも食って composition を開始する**（Google IME 準拠・2026-06-10 確定）。
+    `"super nice"` の先頭 `"` から溜められる。コーディング時の邪魔さは 1-D 直接入力モードで回避する。
   - 制御キー（矢印・Home/End・ファンクション・Ctrl/Alt 併用）は従来どおり素通し。
   - **入力モードが「直接入力」のとき（1-D）は全て素通し**。
 - 変換時はこの記号込みの文字列をそのまま Gemma へ渡す（Latin 正規化方針と整合・HANDOFF §4）。

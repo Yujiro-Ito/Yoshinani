@@ -8,3 +8,8 @@
 // 既知のキー名なら対応する VK を返す。未知なら nullopt。
 // 対応表を増やせば設定で指定できるトリガーキーが増える。
 std::optional<WPARAM> KeyNameToVk(const std::string& name);
+
+// 打鍵を現在のキーボード状態（Shift/CapsLock）とレイアウトで文字に変換する（R1/R2）。
+// 印字可能文字（空白を含む）なら値を、制御キー・dead key・非印字なら 0 を返す。
+// lParam は WM_KEYDOWN のもの（スキャンコードを bits 16-23 から取る）。
+wchar_t VkToChar(WPARAM vk, LPARAM lParam);

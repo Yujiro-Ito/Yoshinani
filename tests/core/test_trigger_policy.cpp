@@ -15,6 +15,11 @@ TEST_CASE("Trigger(Tab): 非空なら Commit / 空なら PassThrough") {
     CHECK(Decide(KeyKind::Trigger, true)  == InputAction::PassThrough);
 }
 
+TEST_CASE("Enter(生確定): 非空なら CommitRaw / 空なら PassThrough(改行)") {
+    CHECK(Decide(KeyKind::Enter, false) == InputAction::CommitRaw);
+    CHECK(Decide(KeyKind::Enter, true)  == InputAction::PassThrough);
+}
+
 TEST_CASE("Space(区切り): 非空なら Append / 空なら PassThrough") {
     CHECK(Decide(KeyKind::Space, false) == InputAction::Append);
     CHECK(Decide(KeyKind::Space, true)  == InputAction::PassThrough);

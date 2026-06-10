@@ -9,8 +9,8 @@ namespace yoshinani::core::application {
 
 struct Settings {
     // 確定トリガーのキー名（ポータブルな名前。各OSのキーコードへは infra が対応づける）。
-    // 例: "Tab" / "Period"(。) / "Comma"(、) / "Space" / "Enter"
-    // 既定は Tab。Space は分かち書きの区切りに使うためトリガーにしない。
+    // 例: "Tab" / "Period"(。) / "Comma"(、)
+    // 既定は Tab。Space（分かち書きの区切り）と Enter（生確定専用）はトリガーにできない。
     std::vector<std::string> triggerKeys{ "Tab" };
 };
 

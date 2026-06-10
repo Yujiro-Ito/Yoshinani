@@ -133,8 +133,10 @@ OnKeyDown(wParam=VK, ...)
 - [ ] preedit 空で Enter → 通常の改行
 - [ ] Tab（変換確定）と Enter（生確定）が共存して期待どおり動く
 
-### TBD（Enter）
-- Enter を「生確定」とするか「変換して確定（Tab と同義）」とするか。現状は **Google IME 準拠＝表示中の preedit をそのまま確定（変換なし）** と解釈。要ユーザー確認。
+### TBD（Enter）→ 確定（2026-06-10）
+- **生確定で確定**（ユーザー確認済み）。`KeyKind::Enter` × preedit 非空 → `InputAction::CommitRaw`（変換なし）。
+  Enter は生確定専用とし、settings.json の triggerKeys に "Enter" を書いても無視する
+  （`LoadTriggerVKs` で VK_RETURN を除外。Space の区切り専用ガードと同じ扱い）。
 
 ## 受け入れ条件（MAIN_SPEC §7 より）
 

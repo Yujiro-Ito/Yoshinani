@@ -23,22 +23,25 @@ bool IsDown(int vk) { return (GetKeyState(vk) & 0x8000) != 0; }
 
 // VK を core の KeyKind に正規化し、文字を伴う場合は out_ch に返す（infra の責務）。
 //   どの VK が確定トリガーかは triggers（設定由来）で決まる。
-KeyKind Classify(WPARAM vk, const std::set<WPARAM>& triggers, wchar_t& out_ch) {
+//   文字は ToUnicodeEx（KeyMap::VkToChar）で取得し、Shift/CapsLock/レイアウトを反映する（R1/R2）。
+KeyKind Classify(WPARAM vk, LPARAM lParam, const std::set<WPARAM>& triggers, wchar_t& out_ch) {
     out_ch = 0;
     if (IsDown(VK_CONTROL) || IsDown(VK_MENU)) return KeyKind::Other;  // Ctrl/Alt は触らない
 
     if (triggers.count(vk) != 0) return KeyKind::Trigger;              // 確定トリガー（設定・既定 Tab）
 
-    if (vk >= 'A' && vk <= 'Z') {                  // 英字 → 小文字ローマ字
-        out_ch = static_cast<wchar_t>(L'a' + (vk - 'A'));
-        return KeyKind::Character;
-    }
     switch (vk) {
-        case VK_SPACE:  out_ch = L' '; return KeyKind::Space;  // 区切り空白（分かち書き用）
+        case VK_RETURN: return KeyKind::Enter;                  // 生確定（preedit 中のみ消費）
+        case VK_SPACE:  out_ch = L' '; return KeyKind::Space;   // 区切り空白（分かち書き用）
         case VK_BACK:   return KeyKind::Backspace;
         case VK_ESCAPE: return KeyKind::Escape;
-        default:        return KeyKind::Other;
+        default:        break;
     }
+
+    // 英字・数字・記号は打鍵文字をそのまま preedit に入れる（大小・記号は Gemma へ忠実に渡す）。
+    // 矢印・F キー等は文字にならないので自動的に素通し。
+    out_ch = VkToChar(vk, lParam);
+    return (out_ch != 0) ? KeyKind::Character : KeyKind::Other;
 }
 
 }  // namespace
@@ -115,6 +118,9 @@ std::set<WPARAM> CTextService::LoadTriggerVKs() const {
             // Space は分かち書きの区切り専用。トリガーには使わせない
             // （設定で "Space" を指定しても区切り機能を優先）。
             if (*vk == static_cast<WPARAM>(VK_SPACE)) continue;
+            // Enter は生確定（CommitRaw）専用。トリガーにすると変換確定に
+            // 化けて Google IME 準拠の挙動が壊れるため除外（1-C 拡張）。
+            if (*vk == static_cast<WPARAM>(VK_RETURN)) continue;
             vks.insert(*vk);
         }
     }
@@ -294,21 +300,21 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/) {
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM /*lParam*/,
+STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPARAM lParam,
                                          BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
-    KeyKind kind = Classify(wParam, m_triggerVKs, ch);
+    KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, m_session.Empty());
     *pfEaten = (act != InputAction::PassThrough);
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lParam*/,
+STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam,
                                      BOOL* pfEaten) {
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
-    KeyKind kind = Classify(wParam, m_triggerVKs, ch);
+    KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
     InputAction act = Decide(kind, m_session.Empty());
     *pfEaten = (act != InputAction::PassThrough);
 
@@ -342,6 +348,17 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM /*lP
                         if (r.ok && !r.text.empty()) toCommit = r.text;
                     });
             }
+            RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
+                CommitText(ec, pic, toCommit);
+                return S_OK;
+            });
+            m_session.Clear();
+            break;
+        }
+
+        case InputAction::CommitRaw: {
+            // Enter による生確定: 変換せず preedit をそのまま確定（Google IME 準拠・1-C 拡張）。
+            const std::u16string toCommit = m_session.Preedit();
             RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
                 CommitText(ec, pic, toCommit);
                 return S_OK;
