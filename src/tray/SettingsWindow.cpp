@@ -498,26 +498,29 @@ void CreateChildren(HWND hWnd) {
     const int Y0 = rcTab.top  + 10;
     const int CW = rcTab.right - rcTab.left - 20;
 
+    // 共通: 子コントロールは作成時から WS_VISIBLE で見える状態にしておく。
+    // タブ内コントロールは ShowTab() の SW_HIDE/SW_SHOW で切替（初期可視でも問題なし）、
+    // タブ外コントロール（下段の OK/Cancel/Apply）は常に見えるべきなのでこれが必須。
+    constexpr DWORD kVis = WS_CHILD | WS_VISIBLE;
     auto mkLabel = [&](int y, int id, const wchar_t* text) {
         HWND h = CreateWindowExW(0, L"STATIC", text,
-                                 WS_CHILD | SS_LEFT,
+                                 kVis | SS_LEFT,
                                  X, y, CW, 18, hWnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                  hi, nullptr);
         SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
         return h;
     };
-    // 折返しを使う複数行ラベル（説明文用）。SS_LEFT は wrap する仕様。
     auto mkHelp = [&](int y, int h, const wchar_t* text) {
         HWND hw = CreateWindowExW(0, L"STATIC", text,
-                                  WS_CHILD | SS_LEFT,
+                                  kVis | SS_LEFT,
                                   X, y, CW, h, hWnd, nullptr, hi, nullptr);
         SendMessageW(hw, WM_SETFONT, reinterpret_cast<WPARAM>(st->hFont), TRUE);
         return hw;
     };
     auto mkEdit = [&](int y, int id, DWORD extra = 0) {
         HWND h = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                 WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | extra,
+                                 kVis | WS_TABSTOP | ES_AUTOHSCROLL | extra,
                                  X, y, CW, 24, hWnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                  hi, nullptr);
@@ -526,7 +529,7 @@ void CreateChildren(HWND hWnd) {
     };
     auto mkButton = [&](int x, int y, int w, int id, const wchar_t* text) {
         HWND h = CreateWindowExW(0, L"BUTTON", text,
-                                 WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                                 kVis | WS_TABSTOP | BS_PUSHBUTTON,
                                  x, y, w, 26, hWnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                  hi, nullptr);
@@ -535,7 +538,7 @@ void CreateChildren(HWND hWnd) {
     };
     auto mkRadio = [&](int x, int y, int w, int id, const wchar_t* text, bool first) {
         HWND h = CreateWindowExW(0, L"BUTTON", text,
-                                 WS_CHILD | WS_TABSTOP | BS_AUTORADIOBUTTON | (first ? WS_GROUP : 0),
+                                 kVis | WS_TABSTOP | BS_AUTORADIOBUTTON | (first ? WS_GROUP : 0),
                                  x, y, w, 22, hWnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                  hi, nullptr);
@@ -544,7 +547,7 @@ void CreateChildren(HWND hWnd) {
     };
     auto mkCombo = [&](int y, int w, int id) {
         HWND h = CreateWindowExW(0, L"COMBOBOX", L"",
-                                 WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+                                 kVis | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
                                  X, y, w, 200, hWnd,
                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                  hi, nullptr);
@@ -570,22 +573,22 @@ void CreateChildren(HWND hWnd) {
     const int wClr    = 70;
     for (int i = 0; i < KM_ROW_COUNT; ++i) {
         const int y = Y0 + i * rowH;
-        HWND lbl = CreateWindowExW(0, L"STATIC", kmLabels[i], WS_CHILD | SS_LEFT,
+        HWND lbl = CreateWindowExW(0, L"STATIC", kmLabels[i], kVis | SS_LEFT,
                                    xLabel, y + 5, wLabel, 18, hWnd, nullptr, hi, nullptr);
         HWND edt = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                   WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | ES_READONLY,
+                                   kVis | WS_TABSTOP | ES_AUTOHSCROLL | ES_READONLY,
                                    xEdit, y, wEdit, 24, hWnd,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                                        ID_KM_BASE + i * ID_KM_PER_ROW + 0)),
                                    hi, nullptr);
         HWND rec = CreateWindowExW(0, L"BUTTON", L"記録",
-                                   WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                                   kVis | WS_TABSTOP | BS_PUSHBUTTON,
                                    xRec, y, wRec, 26, hWnd,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                                        ID_KM_BASE + i * ID_KM_PER_ROW + 1)),
                                    hi, nullptr);
         HWND clr = CreateWindowExW(0, L"BUTTON", L"クリア",
-                                   WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+                                   kVis | WS_TABSTOP | BS_PUSHBUTTON,
                                    xClr, y, wClr, 26, hWnd,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(
                                        ID_KM_BASE + i * ID_KM_PER_ROW + 2)),
