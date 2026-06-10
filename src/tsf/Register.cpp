@@ -98,10 +98,13 @@ void UnregisterProfiles() {
 //       （Win11 の新メモ帳・ストアアプリ等）で入力エンジンとして選ばれるための宣言。
 //       これが無いと従来型 Win32 アプリでしか有効化されない（メモ帳で素通りする原因）。
 //   - GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT : システムトレイ（言語切替 UI）対応の宣言。
+//   - GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER: preedit の下線スタイル提供（4-B）。
+//       これが無いとアプリは ITfDisplayAttributeProvider を問い合わせず既定描画になる。
 static const GUID* const c_supportedCategories[] = {
     &GUID_TFCAT_TIP_KEYBOARD,
     &GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
     &GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+    &GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
 };
 
 BOOL RegisterCategories() {

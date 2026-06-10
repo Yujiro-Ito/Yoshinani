@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "application/ConversionQueue.h"
+#include "application/PreeditView.h"
 #include "domain/ports/IKanaKanjiConverter.h"
 
 using yoshinani::core::application::ConversionQueue;
@@ -83,6 +84,49 @@ TEST_CASE("3-D: 投入順保証 — 先頭が Pending の間は後続が Done �
 
     // 3 はまだ Pending → 取り出せない
     CHECK_FALSE(q.PopReadyInOrder().has_value());
+}
+
+TEST_CASE("4-A: 容量8 — 満杯で TryEnqueue が false（満杯時 Tab 無視の根拠）") {
+    ConversionQueue q(8);
+    for (int i = 1; i <= 8; ++i) {
+        CHECK(q.TryEnqueue(
+            ConversionRequest{static_cast<RequestId>(i), u"a", ConvState::Pending, u""}));
+    }
+    CHECK(q.Full());
+    CHECK_FALSE(q.TryEnqueue(ConversionRequest{9, u"x", ConvState::Pending, u""}));
+    CHECK(q.Size() == 8);
+}
+
+TEST_CASE("4-A: Clear で全破棄 — 破棄済み id の遅延 MarkDone は無視される") {
+    ConversionQueue q(8);
+    q.TryEnqueue(ConversionRequest{1, u"a", ConvState::Pending, u""});
+    q.TryEnqueue(ConversionRequest{2, u"b", ConvState::Pending, u""});
+    q.Clear();
+    CHECK(q.Empty());
+    CHECK_FALSE(q.MarkDone(1, u"A"));  // Esc 後に届いた結果は無視（4-A の全取消）
+    CHECK_FALSE(q.PopReadyInOrder().has_value());
+}
+
+TEST_CASE("4-A: PreeditView — 変換待ちソース連結 + 打鍵中、変換中区間長") {
+    using yoshinani::core::application::BuildPreeditView;
+    ConversionQueue q(8);
+    q.TryEnqueue(ConversionRequest{1, u"kyou ha ", ConvState::Pending, u""});
+    q.TryEnqueue(ConversionRequest{2, u"tenki ", ConvState::Pending, u""});
+
+    auto v = BuildPreeditView(q, u"ga ii");
+    CHECK(v.text == std::u16string(u"kyou ha tenki ga ii"));
+    CHECK(v.convertingLen == 14);  // "kyou ha tenki " まで
+
+    // 空キュー・打鍵のみ → 変換中区間なし
+    q.Clear();
+    auto v2 = BuildPreeditView(q, u"abc");
+    CHECK(v2.text == std::u16string(u"abc"));
+    CHECK(v2.convertingLen == 0);
+
+    // 全空
+    auto v3 = BuildPreeditView(q, u"");
+    CHECK(v3.text.empty());
+    CHECK(v3.convertingLen == 0);
 }
 
 TEST_CASE("3-A+3-D: enqueue→変換→Done→投入順確定（3-E フローの最小形）") {

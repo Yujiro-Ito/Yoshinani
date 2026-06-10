@@ -30,11 +30,11 @@ TEST_CASE("triggerKeys が空配列なら既定を維持") {
     CHECK(s.triggerKeys[0] == "Tab");
 }
 
-TEST_CASE("converter の既定は openai / model 空(バックエンド既定) / medium") {
+TEST_CASE("converter の既定は openai / model 空(バックエンド既定) / low") {
     auto s = ParseSettings("");
     CHECK(s.converter.backend == "openai");
     CHECK(s.converter.model.empty());
-    CHECK(s.converter.reasoningEffort == "medium");
+    CHECK(s.converter.reasoningEffort == "low");
 }
 
 TEST_CASE("converter を JSON から読む") {
@@ -47,7 +47,7 @@ TEST_CASE("converter を JSON から読む") {
 
 TEST_CASE("converter の部分指定・空文字は既定を保つ（トレイUIの部分書き換えに安全）") {
     auto s = ParseSettings(R"({"converter":{"backend":"","model":"gpt-5.4-nano"}})");
-    CHECK(s.converter.backend == "openai");          // 空文字 → 既定維持
+    CHECK(s.converter.backend == "openai");       // 空文字 → 既定維持
     CHECK(s.converter.model == "gpt-5.4-nano");
-    CHECK(s.converter.reasoningEffort == "medium");  // 未指定 → 既定維持
+    CHECK(s.converter.reasoningEffort == "low");  // 未指定 → 既定維持
 }

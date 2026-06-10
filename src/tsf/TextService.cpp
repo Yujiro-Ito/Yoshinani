@@ -1,9 +1,11 @@
-// 1-A/1-B/1-C — TIP 本体実装。
+// 1-A/1-B/1-C/4-A/4-B — TIP 本体実装。
 #include "TextService.h"
+#include "DisplayAttribute.h"
 #include "EditSession.h"
 #include "KeyMap.h"
 #include "OllamaKanaKanjiConverter.h"
 #include "OpenAiKanaKanjiConverter.h"
+#include "application/PreeditView.h"
 #include "domain/TriggerPolicy.h"
 #include <fstream>
 #include <memory>
@@ -12,9 +14,14 @@
 #include <string>
 #include <utility>
 
-using yoshinani::core::domain::KeyKind;
-using yoshinani::core::domain::InputAction;
+using yoshinani::core::application::BuildPreeditView;
+using yoshinani::core::application::ConversionRequest;
+using yoshinani::core::application::ConvState;
+using yoshinani::core::domain::ConversionResult;
 using yoshinani::core::domain::Decide;
+using yoshinani::core::domain::InputAction;
+using yoshinani::core::domain::KeyKind;
+using yoshinani::core::domain::RequestId;
 
 namespace {
 
@@ -38,7 +45,7 @@ KeyKind Classify(WPARAM vk, LPARAM lParam, const std::set<WPARAM>& triggers, wch
         default:        break;
     }
 
-    // 英字・数字・記号は打鍵文字をそのまま preedit に入れる（大小・記号は Gemma へ忠実に渡す）。
+    // 英字・数字・記号は打鍵文字をそのまま preedit に入れる（大小・記号は LLM へ忠実に渡す）。
     // 矢印・F キー等は文字にならないので自動的に素通し。
     out_ch = VkToChar(vk, lParam);
     return (out_ch != 0) ? KeyKind::Character : KeyKind::Other;
@@ -48,7 +55,8 @@ KeyKind Classify(WPARAM vk, LPARAM lParam, const std::set<WPARAM>& triggers, wch
 
 CTextService::CTextService()
     : m_cRef(1), m_pThreadMgr(nullptr), m_tfClientId(TF_CLIENTID_NULL),
-      m_pComposition(nullptr) {
+      m_pComposition(nullptr), m_pContext(nullptr),
+      m_queue(8) {  // 4-A: 変換待ちは最大8（満杯時の Tab は無視＝打鍵継続）
     DllAddRef();
 }
 
@@ -69,6 +77,8 @@ STDMETHODIMP CTextService::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<ITfKeyEventSink*>(this);
     } else if (IsEqualIID(riid, IID_ITfCompositionSink)) {
         *ppv = static_cast<ITfCompositionSink*>(this);
+    } else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider)) {
+        *ppv = static_cast<ITfDisplayAttributeProvider*>(this);
     } else {
         *ppv = nullptr;
         return E_NOINTERFACE;
@@ -90,7 +100,7 @@ STDMETHODIMP_(ULONG) CTextService::Release() {
 // ---- 設定読込 ----------------------------------------------------------------
 
 // settings.json（DLL と同じディレクトリ）→ core パーサ。
-// ファイルが無い/不正でも既定値（Tab / openai gpt-5.4-mini medium）になる。
+// ファイルが無い/不正でも既定値（Tab / openai gpt-5.4-mini low）になる。
 yoshinani::core::application::Settings CTextService::LoadSettings() const {
     using yoshinani::core::application::ParseSettings;
     using yoshinani::core::application::Settings;
@@ -134,20 +144,20 @@ std::set<WPARAM> CTextService::LoadTriggerVKs(
 }
 
 // 変換バックエンドの生成。model 空文字は「バックエンド既定」（Settings.h）。
-// A/B 実測（2026-06-10）より既定はクラウド openai gpt-5.4-mini + medium
+// A/B 実測（2026-06-10）より既定はクラウド openai gpt-5.4-mini + low
 // （空白なしローマ字を実質解決。ローカル派は settings.json で "ollama" に切替）。
-std::unique_ptr<yoshinani::core::domain::IKanaKanjiConverter> CTextService::CreateConverter(
+std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter> CTextService::CreateConverter(
         const yoshinani::core::application::ConverterSettings& cs) const {
     if (cs.backend == "ollama") {
-        if (cs.model.empty()) return std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>();
-        return std::make_unique<yoshinani::ipc::OllamaKanaKanjiConverter>(L"localhost", 11434,
+        if (cs.model.empty()) return std::make_shared<yoshinani::ipc::OllamaKanaKanjiConverter>();
+        return std::make_shared<yoshinani::ipc::OllamaKanaKanjiConverter>(L"localhost", 11434,
                                                                           cs.model);
     }
     if (cs.model.empty()) {
-        return std::make_unique<yoshinani::ipc::OpenAiKanaKanjiConverter>("gpt-5.4-mini",
+        return std::make_shared<yoshinani::ipc::OpenAiKanaKanjiConverter>("gpt-5.4-mini",
                                                                           cs.reasoningEffort);
     }
-    return std::make_unique<yoshinani::ipc::OpenAiKanaKanjiConverter>(cs.model, cs.reasoningEffort);
+    return std::make_shared<yoshinani::ipc::OpenAiKanaKanjiConverter>(cs.model, cs.reasoningEffort);
 }
 
 // ---- 活性化 ------------------------------------------------------------------
@@ -159,6 +169,20 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD 
     const auto settings = LoadSettings();
     m_triggerVKs = LoadTriggerVKs(settings);
     m_converter  = CreateConverter(settings.converter);
+
+    // 4-A: ワーカー→TIP スレッドのマーシャラ（結果は OnConvertResult に届く）。
+    m_marshaller.Start([this](RequestId id, ConversionResult r) {
+        OnConvertResult(id, std::move(r));
+    });
+
+    // 4-B: 表示属性 GUID を TfGuidAtom 化（GUID_PROP_ATTRIBUTE の値として使う）。
+    ITfCategoryMgr* pCat = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                   IID_ITfCategoryMgr, reinterpret_cast<void**>(&pCat)))) {
+        pCat->RegisterGUID(yoshinani::tsf::GUID_YoshinaniDaInput, &m_attrInput);
+        pCat->RegisterGUID(yoshinani::tsf::GUID_YoshinaniDaConverting, &m_attrConverting);
+        pCat->Release();
+    }
 
     if (!InitKeyEventSink()) {
         Deactivate();
@@ -173,12 +197,15 @@ STDMETHODIMP CTextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 
 STDMETHODIMP CTextService::Deactivate() {
     UninitKeyEventSink();
+    m_marshaller.Stop();  // 以後ワーカーの結果は捨てられる（OnConvertResult は来ない）
     if (m_pComposition) {
         m_pComposition->Release();
         m_pComposition = nullptr;
     }
+    ReleaseContext();
+    m_queue.Clear();
     m_session.Clear();
-    m_converter.reset();
+    m_converter.reset();  // 実行中ワーカーは shared_ptr 共有で生存（4-A）
     if (m_pThreadMgr) {
         m_pThreadMgr->Release();
         m_pThreadMgr = nullptr;
@@ -204,6 +231,22 @@ void CTextService::UninitKeyEventSink() {
     if (SUCCEEDED(m_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, reinterpret_cast<void**>(&pksm)))) {
         pksm->UnadviseKeyEventSink(m_tfClientId);
         pksm->Release();
+    }
+}
+
+// ---- context 保持（4-A: 結果到着時に edit session を要求するため） -------------
+
+void CTextService::RetainContext(ITfContext* pic) {
+    if (m_pContext == pic) return;
+    if (m_pContext) m_pContext->Release();
+    m_pContext = pic;
+    if (m_pContext) m_pContext->AddRef();
+}
+
+void CTextService::ReleaseContext() {
+    if (m_pContext) {
+        m_pContext->Release();
+        m_pContext = nullptr;
     }
 }
 
@@ -245,14 +288,47 @@ HRESULT CTextService::StartComposition(TfEditCookie ec, ITfContext* pic) {
     return m_pComposition ? S_OK : E_FAIL;
 }
 
+// 4-B: composition 内の [begin, end)（文字オフセット）に表示属性 atom を適用。
+HRESULT CTextService::ApplyAttribute(TfEditCookie ec, ITfContext* pic, ITfRange* pCompRange,
+                                     LONG begin, LONG end, TfGuidAtom atom) {
+    if (begin >= end || atom == TF_INVALID_GUIDATOM) return S_OK;
+
+    ITfProperty* pProp = nullptr;
+    if (FAILED(pic->GetProperty(GUID_PROP_ATTRIBUTE, &pProp))) return E_FAIL;
+
+    HRESULT hr = E_FAIL;
+    ITfRange* pSub = nullptr;
+    if (SUCCEEDED(pCompRange->Clone(&pSub))) {
+        LONG shifted = 0;
+        pSub->Collapse(ec, TF_ANCHOR_START);
+        pSub->ShiftEnd(ec, end, &shifted, nullptr);
+        pSub->ShiftStart(ec, begin, &shifted, nullptr);
+        VARIANT var;
+        var.vt   = VT_I4;
+        var.lVal = static_cast<LONG>(atom);
+        hr = pProp->SetValue(ec, pSub, &var);
+        pSub->Release();
+    }
+    pProp->Release();
+    return hr;
+}
+
+// preedit 連結表示（変換待ち + 打鍵中）と表示属性を composition に反映する。
 HRESULT CTextService::UpdateText(TfEditCookie ec, ITfContext* pic) {
     if (!m_pComposition) return E_FAIL;
 
     ITfRange* pRange = nullptr;
     if (FAILED(m_pComposition->GetRange(&pRange))) return E_FAIL;
 
-    const std::u16string& s = m_session.Preedit();
-    pRange->SetText(ec, 0, reinterpret_cast<const WCHAR*>(s.c_str()), static_cast<LONG>(s.size()));
+    const auto view = BuildPreeditView(m_queue, m_session.Preedit());
+    pRange->SetText(ec, 0, reinterpret_cast<const WCHAR*>(view.text.c_str()),
+                    static_cast<LONG>(view.text.size()));
+
+    // 表示属性: 先頭の変換中区間 = 点線、残りの入力中区間 = 実線（4-B）。
+    const LONG total = static_cast<LONG>(view.text.size());
+    const LONG conv  = static_cast<LONG>(view.convertingLen);
+    ApplyAttribute(ec, pic, pRange, 0, conv, m_attrConverting);
+    ApplyAttribute(ec, pic, pRange, conv, total, m_attrInput);
 
     // 選択（キャレット）を末尾へ
     ITfRange* pSel = nullptr;
@@ -279,7 +355,7 @@ HRESULT CTextService::ClearText(TfEditCookie ec) {
     return S_OK;
 }
 
-// 変換結果（任意文字列）で composition を置換して確定する（Commit 用）。
+// 任意文字列で composition 全体を置換して確定する（Enter 生確定・全確定用）。
 HRESULT CTextService::CommitText(TfEditCookie ec, ITfContext* pic, const std::u16string& text) {
     if (!m_pComposition) {
         if (FAILED(StartComposition(ec, pic)) || !m_pComposition) return E_FAIL;
@@ -289,6 +365,12 @@ HRESULT CTextService::CommitText(TfEditCookie ec, ITfContext* pic, const std::u1
     if (SUCCEEDED(m_pComposition->GetRange(&pRange)) && pRange) {
         hr = pRange->SetText(ec, 0, reinterpret_cast<const WCHAR*>(text.c_str()),
                              static_cast<LONG>(text.size()));
+        // 確定文字列に preedit の下線属性を残さない（4-B）。
+        ITfProperty* pProp = nullptr;
+        if (SUCCEEDED(pic->GetProperty(GUID_PROP_ATTRIBUTE, &pProp))) {
+            pProp->Clear(ec, pRange);
+            pProp->Release();
+        }
         // キャレットを確定文字列の末尾へ
         ITfRange* pSel = nullptr;
         if (SUCCEEDED(pRange->Clone(&pSel))) {
@@ -315,6 +397,104 @@ void CTextService::EndComposition(TfEditCookie ec) {
     }
 }
 
+// ---- 4-A: 変換結果の到着（TIP スレッド・marshaller 経由） ----------------------
+
+void CTextService::OnConvertResult(RequestId id, ConversionResult result) {
+    // Esc 全取消・Enter 全確定の後に届いた結果は queue に居ないので false → 無視。
+    const bool marked = (result.ok && !result.text.empty())
+                            ? m_queue.MarkDone(id, std::move(result.text))
+                            : m_queue.MarkFailed(id);
+    if (!marked) return;
+
+    if (!m_pComposition || !m_pContext) return;  // composition 消滅（フォーカス移動等）→ 破棄
+
+    // pop は edit session の中で行う: session 要求が失敗しても結果はキューに残り、
+    // 次の結果到着時に再試行できる（先に pop すると失敗時に入力が無言で消える）。
+    RequestEditSession(m_pContext, [this](TfEditCookie ec) -> HRESULT {
+        if (!m_pComposition || !m_pContext) return S_OK;
+
+        // 投入順に「先頭から連続して終わっている分」だけ確定する（追い越し禁止・§6.5 ③）。
+        std::u16string committed;
+        while (auto req = m_queue.PopReadyInOrder()) {
+            committed += (req->state == ConvState::Done) ? req->result
+                                                         : req->source;  // 失敗は生ローマ字
+        }
+        if (committed.empty()) return S_OK;  // 先頭がまだ変換中（表示はソースのまま変化なし）
+
+        // 状態はラムダ実行時点で評価する（キャプチャ時点とずれないように）。
+        if (AllEmpty()) {
+            // 全確定: composition 全体を確定文字列で置換して終了。
+            CommitText(ec, m_pContext, committed);
+            return S_OK;
+        }
+
+        // 部分確定: 全文 = 確定分 + 残り preedit を書き、composition の先頭を
+        // 確定分の直後へ縮める（ShiftStart）。先頭より前は確定テキストになる。
+        ITfRange* pRange = nullptr;
+        if (FAILED(m_pComposition->GetRange(&pRange))) return E_FAIL;
+
+        const auto remaining = BuildPreeditView(m_queue, m_session.Preedit());
+        const std::u16string full = committed + remaining.text;
+        pRange->SetText(ec, 0, reinterpret_cast<const WCHAR*>(full.c_str()),
+                        static_cast<LONG>(full.size()));
+
+        // 旧属性を一掃（確定分に下線を残さない・4-B）。
+        ITfProperty* pProp = nullptr;
+        if (SUCCEEDED(m_pContext->GetProperty(GUID_PROP_ATTRIBUTE, &pProp))) {
+            pProp->Clear(ec, pRange);
+            pProp->Release();
+        }
+
+        // 新しい composition 開始位置（確定分の直後）を作って ShiftStart。
+        // shifted が期待値に届かない（range 末尾到達等）場合は縮小を諦め、
+        // 全体を生のまま確定する（composition とモデルの不一致を残さない・稀ケース）。
+        bool shrunk = false;
+        ITfRange* pNewStart = nullptr;
+        if (SUCCEEDED(pRange->Clone(&pNewStart))) {
+            const LONG want = static_cast<LONG>(committed.size());
+            LONG shifted = 0;
+            pNewStart->Collapse(ec, TF_ANCHOR_START);
+            pNewStart->ShiftEnd(ec, want, &shifted, nullptr);
+            if (shifted == want) {
+                pNewStart->Collapse(ec, TF_ANCHOR_END);
+                shrunk = SUCCEEDED(m_pComposition->ShiftStart(ec, pNewStart));
+            }
+            pNewStart->Release();
+        }
+        pRange->Release();
+        if (!shrunk) {
+            m_queue.Clear();
+            m_session.Clear();
+            CommitText(ec, m_pContext, full);
+            return S_OK;
+        }
+
+        // 縮めた composition に属性を再適用 + キャレット末尾。
+        ITfRange* pCompRange = nullptr;
+        if (SUCCEEDED(m_pComposition->GetRange(&pCompRange))) {
+            const LONG total = static_cast<LONG>(remaining.text.size());
+            const LONG conv  = static_cast<LONG>(remaining.convertingLen);
+            ApplyAttribute(ec, m_pContext, pCompRange, 0, conv, m_attrConverting);
+            ApplyAttribute(ec, m_pContext, pCompRange, conv, total, m_attrInput);
+
+            ITfRange* pSel = nullptr;
+            if (SUCCEEDED(pCompRange->Clone(&pSel))) {
+                pSel->Collapse(ec, TF_ANCHOR_END);
+                TF_SELECTION ts;
+                ts.range = pSel;
+                ts.style.ase = TF_AE_NONE;
+                ts.style.fInterimChar = FALSE;
+                m_pContext->SetSelection(ec, 1, &ts);
+                pSel->Release();
+            }
+            pCompRange->Release();
+        }
+        return S_OK;
+    });
+    // 全確定（CommitText が composition を終了）していたら context を手放す。
+    if (!m_pComposition) ReleaseContext();
+}
+
 // ---- ITfKeyEventSink ---------------------------------------------------------
 
 STDMETHODIMP CTextService::OnSetFocus(BOOL /*fForeground*/) {
@@ -326,7 +506,7 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* /*pic*/, WPARAM wParam, LPA
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
     KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
-    InputAction act = Decide(kind, m_session.Empty());
+    InputAction act = Decide(kind, AllEmpty());
     *pfEaten = (act != InputAction::PassThrough);
     return S_OK;
 }
@@ -336,12 +516,13 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
     if (!pfEaten) return E_INVALIDARG;
     wchar_t ch = 0;
     KeyKind kind = Classify(wParam, lParam, m_triggerVKs, ch);
-    InputAction act = Decide(kind, m_session.Empty());
+    InputAction act = Decide(kind, AllEmpty());
     *pfEaten = (act != InputAction::PassThrough);
 
     switch (act) {
         case InputAction::Append:
             m_session.AppendChar(static_cast<char16_t>(ch));
+            RetainContext(pic);
             RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
                 if (!m_pComposition) StartComposition(ec, pic);
                 return UpdateText(ec, pic);
@@ -349,52 +530,60 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPar
             break;
 
         case InputAction::DeleteLast:
+            // 4-A: Backspace は打鍵中セグメントのみ編集（変換待ちには触れない）。
+            //      打鍵中が空（変換待ちのみ）のときは何もしない（キーは消費＝アプリに渡さない）。
+            if (m_session.Empty()) break;
             m_session.Backspace();
             RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
                 HRESULT hr = UpdateText(ec, pic);
-                if (m_session.Empty()) EndComposition(ec);
+                if (AllEmpty()) {
+                    EndComposition(ec);
+                }
                 return hr;
             });
+            if (AllEmpty()) ReleaseContext();
             break;
 
         case InputAction::Commit: {
-            // 変換は edit session の外で同期実行（ドキュメントロックを長時間握らないため）。
-            // 失敗・デーモン不在時は生のローマ字 preedit をそのまま確定（フォールバック・3-E）。
-            std::u16string toCommit = m_session.Preedit();
-            if (m_converter && !m_session.Empty()) {
-                m_converter->Convert(
-                    m_nextRequestId++, m_session.Preedit(),
-                    [&toCommit](yoshinani::core::domain::RequestId,
-                                yoshinani::core::domain::ConversionResult r) {
-                        if (r.ok && !r.text.empty()) toCommit = r.text;
-                    });
-            }
-            RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
-                CommitText(ec, pic, toCommit);
-                return S_OK;
-            });
+            // 4-A: 打鍵中セグメントを変換待ちに enqueue し、即座に打鍵を続けられるようにする。
+            //      満杯（8件）なら何もしない（キーは消費・打鍵は継続できる）。
+            if (m_session.Empty() || m_queue.Full()) break;
+            const RequestId id = m_nextRequestId++;
+            const std::u16string source = m_session.Preedit();
+            m_queue.TryEnqueue(ConversionRequest{id, source, ConvState::Pending, {}});
             m_session.Clear();
+            RetainContext(pic);
+            m_marshaller.Dispatch(m_converter, id, source);  // ワーカーで変換（待たない）
+            RequestEditSession(pic, [this, pic](TfEditCookie ec) -> HRESULT {
+                return UpdateText(ec, pic);  // テキスト不変・属性が 入力中→変換中 に変わる
+            });
             break;
         }
 
         case InputAction::CommitRaw: {
-            // Enter による生確定: 変換せず preedit をそのまま確定（Google IME 準拠・1-C 拡張）。
-            const std::u16string toCommit = m_session.Preedit();
+            // Enter: 見えているもの（変換待ちソース + 打鍵中）を丸ごと生確定（変換しない）。
+            // 変換待ちは破棄＝飛行中の結果は到着時に無視される（4-A）。
+            const std::u16string toCommit = BuildPreeditView(m_queue, m_session.Preedit()).text;
+            m_queue.Clear();
+            m_session.Clear();
             RequestEditSession(pic, [this, pic, toCommit](TfEditCookie ec) -> HRESULT {
                 CommitText(ec, pic, toCommit);
                 return S_OK;
             });
-            m_session.Clear();
+            ReleaseContext();
             break;
         }
 
         case InputAction::Cancel:
+            // Esc: 未確定区間（変換待ち含む）を丸ごと取消（4-A の全取消）。
+            m_queue.Clear();
+            m_session.Clear();
             RequestEditSession(pic, [this](TfEditCookie ec) -> HRESULT {
                 ClearText(ec);
                 EndComposition(ec);
                 return S_OK;
             });
-            m_session.Clear();
+            ReleaseContext();
             break;
 
         case InputAction::PassThrough:
@@ -426,10 +615,28 @@ STDMETHODIMP CTextService::OnPreservedKey(ITfContext* /*pic*/, REFGUID /*rguid*/
 STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie /*ecWrite*/,
                                                    ITfComposition* /*pComposition*/) {
     // アプリ側都合で composition が終了（フォーカス移動など）→ 後始末。
+    // 変換待ちも破棄（飛行中の結果は到着時に無視される・4-A）。
     if (m_pComposition) {
         m_pComposition->Release();
         m_pComposition = nullptr;
     }
+    ReleaseContext();
+    m_queue.Clear();
     m_session.Clear();
     return S_OK;
+}
+
+// ---- ITfDisplayAttributeProvider（4-B） ---------------------------------------
+
+STDMETHODIMP CTextService::EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) {
+    if (!ppEnum) return E_INVALIDARG;
+    *ppEnum = new (std::nothrow) yoshinani::tsf::CEnumDisplayAttributeInfo();
+    return *ppEnum ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP CTextService::GetDisplayAttributeInfo(REFGUID guid,
+                                                   ITfDisplayAttributeInfo** ppInfo) {
+    if (!ppInfo) return E_INVALIDARG;
+    *ppInfo = yoshinani::tsf::CreateDisplayAttributeInfo(guid);
+    return *ppInfo ? S_OK : E_INVALIDARG;
 }

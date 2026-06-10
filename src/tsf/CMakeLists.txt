@@ -8,6 +8,8 @@ add_library(yoshinani.tsf SHARED
   TextService.cpp
   Register.cpp
   KeyMap.cpp
+  ConvertMarshaller.cpp
+  DisplayAttribute.cpp
   yoshinani.def        # .def を source に入れると CMake が /DEF として渡す（COM エクスポート）
 )
 set_target_properties(yoshinani.tsf PROPERTIES OUTPUT_NAME "yoshinani")

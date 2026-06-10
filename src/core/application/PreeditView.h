@@ -1,0 +1,27 @@
+// 4-A/4-B preedit 連結表示 — application（OS非依存・テスト対象）。
+// B方式（§6.5）: 見た目は 1 本の preedit だが、内部は「変換待ちセグメント列 + 打鍵中」。
+//   [A:変換中][B:変換中][C:打鍵中]
+// この連結文字列と「変換中区間の長さ」を算出する純関数。TSF 層はこの値を
+// SetText と表示属性（実線/点線下線・4-B）の適用にそのまま使う。
+#pragma once
+#include <string>
+
+#include "application/ConversionQueue.h"
+
+namespace yoshinani::core::application {
+
+struct PreeditView {
+    std::u16string text;          // 表示文字列（変換待ちソース連結 + 打鍵中）
+    std::size_t convertingLen{};  // 先頭からの「変換中」区間長（残りが「入力中」区間）
+};
+
+// 変換待ちは投入順にソース（ローマ字）のまま表示する（結果は投入順確定の瞬間に反映）。
+inline PreeditView BuildPreeditView(const ConversionQueue& queue, const std::u16string& typing) {
+    PreeditView v;
+    for (const auto& r : queue.Items()) v.text += r.source;
+    v.convertingLen = v.text.size();
+    v.text += typing;
+    return v;
+}
+
+}  // namespace yoshinani::core::application

@@ -1,9 +1,13 @@
-// 1-A/1-B/1-C — TIP 本体。
+// 1-A/1-B/1-C/4-A/4-B — TIP 本体。
 //   1-A: ITfTextInputProcessorEx（活性化・登録）
 //   1-B: ITfKeyEventSink / ITfCompositionSink（キー捕捉・preedit）
 //   1-C: TriggerPolicy(core) を使った確定/取消
+//   4-A: 非同期変換（Tab=enqueue で打鍵継続、結果は投入順に先頭確定）
+//   4-B: ITfDisplayAttributeProvider（入力中=実線 / 変換中=点線 下線）
 #pragma once
 #include "Globals.h"
+#include "ConvertMarshaller.h"
+#include "application/ConversionQueue.h"
 #include "application/InputSession.h"
 #include "application/Settings.h"
 #include "domain/ports/IKanaKanjiConverter.h"
@@ -13,7 +17,8 @@
 
 class CTextService final : public ITfTextInputProcessorEx,
                            public ITfKeyEventSink,
-                           public ITfCompositionSink {
+                           public ITfCompositionSink,
+                           public ITfDisplayAttributeProvider {
 public:
     CTextService();
 
@@ -38,6 +43,10 @@ public:
     // ITfCompositionSink
     STDMETHODIMP OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) override;
 
+    // ITfDisplayAttributeProvider（4-B）
+    STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) override;
+    STDMETHODIMP GetDisplayAttributeInfo(REFGUID guid, ITfDisplayAttributeInfo** ppInfo) override;
+
 private:
     ~CTextService();
 
@@ -50,29 +59,51 @@ private:
 
     // composition 操作（edit session 内から呼ぶ）
     HRESULT StartComposition(TfEditCookie ec, ITfContext* pic);
-    HRESULT UpdateText(TfEditCookie ec, ITfContext* pic);   // preedit を composition に反映
+    HRESULT UpdateText(TfEditCookie ec, ITfContext* pic);   // preedit 連結表示+属性を反映
     HRESULT ClearText(TfEditCookie ec);                     // composition の中身を空に（取消用）
-    HRESULT CommitText(TfEditCookie ec, ITfContext* pic,    // 任意文字列(変換結果)で確定
+    HRESULT CommitText(TfEditCookie ec, ITfContext* pic,    // 任意文字列で全確定
                        const std::u16string& text);
     void    EndComposition(TfEditCookie ec);
+
+    // 4-B: composition 内 [begin,end) に表示属性 atom を適用（edit session 内）。
+    HRESULT ApplyAttribute(TfEditCookie ec, ITfContext* pic, ITfRange* pCompRange,
+                           LONG begin, LONG end, TfGuidAtom atom);
+
+    // 4-A: 変換結果の到着（marshaller 経由・TIP スレッド）。投入順に先頭セグメントを確定する。
+    void OnConvertResult(yoshinani::core::domain::RequestId id,
+                         yoshinani::core::domain::ConversionResult result);
+
+    // 4-A: 打鍵中/変換待ちセグメントの有無（Decide の preeditEmpty に渡す）。
+    bool AllEmpty() const { return m_queue.Empty() && m_session.Empty(); }
+
+    // 最後にキーを受けた context を保持（変換結果の到着時に edit session を要求するため）。
+    void RetainContext(ITfContext* pic);
+    void ReleaseContext();
 
     // settings.json（DLL と同じディレクトリ）を読む。無い/不正なら既定値。
     yoshinani::core::application::Settings LoadSettings() const;
     // 設定から確定トリガーの VK 集合を構築する。
     std::set<WPARAM> LoadTriggerVKs(const yoshinani::core::application::Settings& settings) const;
     // 設定から変換バックエンド（openai / ollama）を生成する（3-A ポート経由の注入）。
-    std::unique_ptr<yoshinani::core::domain::IKanaKanjiConverter>
+    std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter>
         CreateConverter(const yoshinani::core::application::ConverterSettings& cs) const;
 
     LONG          m_cRef;
     ITfThreadMgr* m_pThreadMgr;
     TfClientId    m_tfClientId;
     ITfComposition* m_pComposition;
+    ITfContext*     m_pContext;   // composition 継続中の対象 context（AddRef 保持）
 
-    yoshinani::core::application::InputSession m_session;
+    yoshinani::core::application::InputSession    m_session;  // 打鍵中セグメント
+    yoshinani::core::application::ConversionQueue m_queue;    // 変換待ちセグメント列（4-A）
     std::set<WPARAM> m_triggerVKs;   // 確定トリガー（設定由来。既定 = Tab）
 
-    // 変換器（3-A ポート）。v1 は Ollama(Gemma) 実装を注入（将来は自作デーモン+パイプへ差し替え）。
-    std::unique_ptr<yoshinani::core::domain::IKanaKanjiConverter> m_converter;
+    // 変換器（3-A ポート）。shared なのはワーカースレッドと生存を共有するため（4-A）。
+    std::shared_ptr<yoshinani::core::domain::IKanaKanjiConverter> m_converter;
+    yoshinani::tsf::ConvertMarshaller m_marshaller;           // 結果を TIP スレッドへ戻す
     yoshinani::core::domain::RequestId m_nextRequestId = 1;
+
+    // 4-B: 表示属性の TfGuidAtom（Activate で RegisterGUID）
+    TfGuidAtom m_attrInput = TF_INVALID_GUIDATOM;
+    TfGuidAtom m_attrConverting = TF_INVALID_GUIDATOM;
 };

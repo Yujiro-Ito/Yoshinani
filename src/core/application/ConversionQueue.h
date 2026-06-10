@@ -46,6 +46,13 @@ public:
     //   先頭がまだ Pending なら（後続が Done でも）nullopt＝順序を追い越させない。
     std::optional<ConversionRequest> PopReadyInOrder();
 
+    // 全件破棄（Esc の全取消・4-A）。以後、破棄済み id の MarkDone/MarkFailed は
+    // false を返すだけになる＝遅れて届く変換結果は自然に無視される。
+    void Clear() noexcept { items_.clear(); }
+
+    // 表示合成用の読み取りアクセス（preedit 連結表示・4-A/4-B）。
+    const std::deque<ConversionRequest>& Items() const noexcept { return items_; }
+
 private:
     std::size_t capacity_;
     std::deque<ConversionRequest> items_;
