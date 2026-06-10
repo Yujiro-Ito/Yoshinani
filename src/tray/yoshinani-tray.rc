@@ -1,0 +1,10 @@
+// よしなに (Yoshinani) tray — Win32 リソーススクリプト。
+// アイコン: ../../assets/yoshinani.ico（256/64/48/40/32/24/20/16 マルチサイズ）。
+// マニフェスト: comctl32 v6（Visual Styles）+ DPI Aware（CMake 側で /MANIFEST:NO 抑制）。
+#include <winuser.h>
+#include "resource.h"
+
+IDI_TRAY ICON "../../assets/yoshinani.ico"
+
+// CREATEPROCESS_MANIFEST_RESOURCE_ID = 1
+1 RT_MANIFEST "yoshinani-tray.manifest"
