@@ -24,7 +24,7 @@
 - **入力リッチ化 R1/R2/Enter 完了・実機確認済み（2026-06-10・Chromium 系で全項目 OK）**:
   - R1: Shift で大文字 / R2: 記号・数字も preedit に入る（空でも composition 開始＝Google IME 準拠）。実装は `KeyMap::VkToChar`（`ToUnicodeEx`・フラグ 0x4 でカーネル状態非破壊・UWP の lParam=0 は `MapVirtualKeyEx` フォールバック）。
   - Enter: preedit 非空→**生確定**（`KeyKind::Enter`→`InputAction::CommitRaw`・変換なし・改行なし）/ 空→素通し（改行）。**Enter は triggerKeys に書いても無視**（`LoadTriggerVKs` で VK_RETURN 除外・Space と同じガード）。
-  - 1-D（モード切替）は未実装だが TBD は確定済み: 切替キー=半角/全角・既定=変換モード（spec [1-D](.spec/sub-specs/phase1-input-mode.md)）。
+- **1-D 入力モード切替 完了（2026-06-10・コミット `c308a8d`）**: 半角/全角キーで 変換⇄直接 を切替（settings.json `modeToggleKeys`・既定 "Kanji"＝VK_KANJI/OEM_AUTO/OEM_ENLW をエイリアス）。モード状態は core `InputModeState`、TSF は `GUID_COMPARTMENT_KEYBOARD_OPENCLOSE` と双方向同期（`ITfCompartmentEventSink` で言語バー/アプリ側切替にも追従）。直接入力モードは切替キー以外すべて素通し＝コーディング可。切替/外部 close 時は未確定を生確定して保護（`FlushAsRaw`・sink からは async edit session）。**activate 時は常に変換モードで開始**（open/close はスレッド共有のため直前の別 IME の close 値を引き継ぐと「選んだのに動かない」になるのを防ぐ）。⚠ ランタイム実機確認は本コミット版では未実施（前回の動作確認はビルド乱れ区間と重なり信頼できない。次回まず実機確認すること）。
 - **変換方針 決定済み**: B方式（romaji→汎用LLM直渡し）。モデル = **Gemma 4 E4B-it-qat**（ローカル・GGUF・Apache 2.0）、**思考オフ(think=false)必須**。
 
 ### 検証結果（2026-06-09）と既知課題
@@ -91,7 +91,7 @@
 4. 任意: zenz 速い道（全部日本語＝数十ms）を二段目に。英数密の空白なし弱点は「直すなら既存IME」哲学で許容。
 5. **入力リッチ化＆モード切替（2026-06-09 ユーザー要望・subspec 反映済）**:
    - ~~R1 Shift 大文字 / R2 記号入力 / Enter 生確定~~ **完了（2026-06-10・実機確認 OK）**。
-   - **残り = 1-D 入力モード切替**（変換⇄直接・[1-D](.spec/sub-specs/phase1-input-mode.md)）。TBD 確定済み: 切替キー=半角/全角・既定=変換。**open/close コンパートメント実装は §2 の標準アプリ非 engage 改善の候補**＝次の有力着手先。
+   - ~~1-D 入力モード切替~~ **実装完了（2026-06-10・`c308a8d`・実機未確認）**。open/close コンパートメント実装が §2 の標準アプリ非 engage を改善するかは次回実機で要検証。
 
 ---
 
@@ -107,7 +107,8 @@
 
 ## 7. git 状態
 - `main` ブランチ。2026-06-09 セッション分は**全 push 済み**（TSF カテゴリ / build.ps1 拡張 / 3-A・3-D / spec 反映 / 3-E 変換結線）。
-- **2026-06-10 セッション**: ① R1/R2/Enter 実装 ② クラウド A/B → `OpenAiKanaKanjiConverter` 結線 ③ 4-A async + 4-B 下線区別＋既定 effort=low ④ **継続モード（文脈チェイン）**（いずれもレビュー済・ctest 緑・実機 OK。ハッシュは git log 参照）。
-- 残債: ① 標準アプリ TIP 非 engage（§2） ② 1-D 入力モード切替が未実装 ③ `OllamaKanaKanjiConverter` の keep_alive 未指定 ④ `verify-ime.ps1` が `-BuildDir` 未対応（ninja-debug 固定） ⑤ Claude CLI バックエンド（§2 保留・料金体系確認が先） ⑥ `/rule` インラインルール（将来候補）。
+- **2026-06-10 セッション**: ① R1/R2/Enter 実装 ② クラウド A/B → `OpenAiKanaKanjiConverter` 結線 ③ 4-A async + 4-B 下線区別＋既定 effort=low ④ 継続モード（文脈チェイン） ⑤ **1-D 入力モード切替**（`c308a8d`。①〜④はレビュー済・実機 OK。⑤はレビュー済・ctest 緑だが**実機未確認**）。
+  - ⚠ 注意: 本セッション後半はターミナル出力が乱れ、一時「1-D の追加コミット・push・GitHub Discussion 投稿・memory 追記」を実施したと誤認したが**いずれも未実行**だった。実際の到達点は上記＝1-D を `c308a8d` でコミットしたところまで。push 状況は `git status -sb` で要確認。
+- 残債: ① **1-D の実機確認**（メモ帳含む。標準アプリ engage が 4-B/1-D で改善したかも併せて検証） ② `OllamaKanaKanjiConverter` の keep_alive 未指定 ③ `verify-ime.ps1` が `-BuildDir` 未対応 ④ Claude CLI バックエンド（`--bare` はサブスク認証不可・常駐 SDK 案は料金体系確認が先） ⑤ `/rule` インラインルール（将来候補）。
 - `build/ninja-*`（debug/fix/run1/run2）は gitignore 配下。`%USERPROFILE%\.yoshinani\openai.key` は**リポジトリ外（コミット禁止のシークレット）**。
 - コミット履歴に各フェーズの判断が残っている（`git log --oneline`）。
